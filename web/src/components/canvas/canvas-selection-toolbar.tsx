@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Group, Ungroup } from "lucide-react";
+import { Download, Group, Ungroup } from "lucide-react";
 import { Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -19,6 +19,8 @@ export function CanvasSelectionToolbar({
     onGroup,
     onUngroup,
     onGrid,
+    onDownload,
+    downloading = false,
 }: {
     nodes: CanvasNodeData[];
     viewport: ViewportTransform;
@@ -28,6 +30,8 @@ export function CanvasSelectionToolbar({
     onGroup: () => void;
     onUngroup: () => void;
     onGrid: () => void;
+    onDownload?: () => void;
+    downloading?: boolean;
 }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -66,6 +70,7 @@ export function CanvasSelectionToolbar({
                     onPointerDown={(event) => event.stopPropagation()}
                 >
                     <SelectionAction title="宫格布局" label="宫格布局" icon={<Group className="size-4" />} onClick={onGrid} />
+                    {onDownload && nodes.some((node) => node.type === "image" || node.type === "group") ? <SelectionAction title="批量下载图片（ZIP）" label={downloading ? "打包中…" : "批量下载"} icon={<Download className="size-4" />} onClick={onDownload} disabled={downloading} /> : null}
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
                     {canUngroup ? <SelectionAction title={t("canvas.nodeToolbar.ungroupTitle")} label={t("canvas.nodeToolbar.ungroup")} icon={<Ungroup className="size-4" />} onClick={onUngroup} /> : null}
                 </div>
@@ -74,10 +79,10 @@ export function CanvasSelectionToolbar({
     );
 }
 
-function SelectionAction({ title, label, icon, onClick }: { title: string; label: string; icon: ReactNode; onClick: () => void }) {
+function SelectionAction({ title, label, icon, onClick, disabled }: { title: string; label: string; icon: ReactNode; onClick: () => void; disabled?: boolean }) {
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
-            <button type="button" className="group relative flex h-12 items-center whitespace-nowrap px-1.5" onClick={onClick} aria-label={title}>
+            <button type="button" className="group relative flex h-12 items-center whitespace-nowrap px-1.5 disabled:opacity-40" onClick={onClick} aria-label={title} disabled={disabled}>
                 <span className="flex h-9 items-center gap-2 rounded-lg px-2.5 transition group-hover:bg-[#f0f0f1]">
                     {icon}
                     <span>{label}</span>

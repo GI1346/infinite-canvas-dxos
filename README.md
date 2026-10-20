@@ -28,7 +28,7 @@
 
 [下载 Windows x64 安装包](https://github.com/GI1346/infinite-canvas-dxos/releases/latest) · [桌面版使用及打包说明](desktop/README.md)
 
-BlinkFlow 是基于原开源画布的 Windows 分支，增加 LLM 多模态分析、本地画笔/裁剪扩图/宫格切片、Ctrl 扫线断开、多维表格、端口连线、并发生成、`canvas-call/v1` 中转站调用协议、宫格排列，以及保留 API 配置的图片/历史/日志直接清理工具。内置 65535 生图和对话两个独立渠道，API Key 均为空，须分别配置，不会共用。桌面版操作及验收状态见 [桌面版说明](desktop/README.md)。基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)，保留原作者信息与许可证。
+BlinkFlow 是基于原开源画布的 Windows 分支，增加 LLM 多模态分析、本地画笔/裁剪扩图/宫格切片、Ctrl 扫线断开、多维表格、端口连线、并发生成、框选/分组图片批量 ZIP 下载、Alt 拖动复制、`canvas-call/v1` 中转站调用协议、宫格排列，以及保留 API 配置的图片/历史/日志直接清理工具。内置 65535 生图和对话两个独立渠道，API Key 均为空，须分别配置，不会共用。桌面版操作及验收状态见 [桌面版说明](desktop/README.md)。基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)，保留原作者信息与许可证。
 
 > [!CAUTION]
 > 项目目前处于开发阶段，不保证历史数据兼容。各种本地存储格式都可能直接调整，欢迎关注后续更新。

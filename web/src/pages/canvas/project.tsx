@@ -26,6 +26,7 @@ import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas
 import { ConnectionCutEffects, useConnectionCutter } from "@/components/canvas/use-connection-cutter";
 import { tableConnectionPort } from "@/lib/canvas/canvas-table-port";
 import { connectionCutHistory } from "@/lib/canvas/canvas-connection-cut-history";
+import { cloneDragSelection, expandDragNodeIds } from "@/lib/canvas/canvas-drag-copy";
 import { connectionCurve } from "@/lib/canvas/canvas-connection-geometry";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
@@ -81,6 +82,7 @@ import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { arrangeGrid } from "@/lib/canvas/canvas-grid-layout";
 import { canvasDownloadMimeType, canvasDownloadName } from "@/lib/canvas/canvas-download-name";
+import { useCanvasImageDownload } from "@/hooks/use-canvas-image-download";
 import { CanvasRelayTasksModal } from "@/components/canvas/canvas-relay-tasks-modal";
 import { InputNumber } from "antd";
 import { CanvasCleanupModal } from "@/components/canvas/canvas-cleanup-modal";
@@ -179,6 +181,7 @@ function measureFocusFrame(container: HTMLDivElement | null, nodeId: string) {
 
 function InfiniteCanvasPage() {
     const { message, modal } = App.useApp();
+    const { downloading: batchDownloading, downloadImages } = useCanvasImageDownload();
     const { t } = useTranslation();
     // Subscribe to the registry version so plugin registration changes rerender the canvas.
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
@@ -213,6 +216,9 @@ function InfiniteCanvasPage() {
         // Keyed by node id so drag frames look positions up in O(1) instead of scanning the array per node.
         initialSelectedNodes: Map<string, { x: number; y: number }>;
         movedIds: Set<string>;
+        copyRequested: boolean;
+        originalSelection: Set<string>;
+        beforeCopy: CanvasHistoryEntry | null;
     }>({
         isDraggingNode: false,
         hasMoved: false,
@@ -220,6 +226,9 @@ function InfiniteCanvasPage() {
         startY: 0,
         initialSelectedNodes: new Map(),
         movedIds: new Set(),
+        copyRequested: false,
+        originalSelection: new Set(),
+        beforeCopy: null,
     });
 
     const config = useConfigStore((state) => state.config);
@@ -1317,15 +1326,7 @@ function InfiniteCanvasPage() {
         const currentNodes = nodesRef.current;
         const nextSelected = pendingSelectionRef.current ?? selectNodeByEvent(event, nodeId).nextSelected;
         pendingSelectionRef.current = null;
-        const dragIds = new Set(nextSelected);
-        currentNodes.forEach((node) => {
-            if (!nextSelected.has(node.id)) return;
-            if (node.type === CanvasNodeType.Group) {
-                currentNodes.forEach((child) => {
-                    if (child.metadata?.groupId === node.id) dragIds.add(child.id);
-                });
-            }
-        });
+        const dragIds = expandDragNodeIds(nextSelected, currentNodes);
         const initialSelectedNodes = new Map(currentNodes.filter((node) => dragIds.has(node.id)).map((node): [string, { x: number; y: number }] => [node.id, { x: node.position.x, y: node.position.y }]));
         dragRef.current = {
             isDraggingNode: true,
@@ -1334,11 +1335,32 @@ function InfiniteCanvasPage() {
             startY: event.clientY,
             initialSelectedNodes,
             movedIds: new Set(initialSelectedNodes.keys()),
+            copyRequested: event.altKey,
+            originalSelection: new Set(nextSelected),
+            beforeCopy: null,
         };
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
     }, []);
+
+    // Latch Alt at mouse-down, but create nothing until the existing drag threshold is crossed.
+    const prepareNodeDrag = useCallback((clientX: number, clientY: number) => {
+        const drag = dragRef.current;
+        if (!drag.isDraggingNode) return;
+        if (Math.abs(clientX - drag.startX) > 3 || Math.abs(clientY - drag.startY) > 3) drag.hasMoved = true;
+        if (!drag.hasMoved || !drag.copyRequested || drag.beforeCopy) return;
+        drag.beforeCopy = createHistoryEntry();
+        if (historyCommitTimerRef.current) { clearTimeout(historyCommitTimerRef.current); historyCommitTimerRef.current = null; }
+        const copy = cloneDragSelection(nodesRef.current, connectionsRef.current, drag.originalSelection);
+        drag.initialSelectedNodes = new Map(copy.nodes.map((node) => [node.id, { ...node.position }]));
+        drag.movedIds = new Set(drag.initialSelectedNodes.keys());
+        nodesRef.current = [...nodesRef.current, ...copy.nodes];
+        connectionsRef.current = [...connectionsRef.current, ...copy.connections];
+        selectedNodeIdsRef.current = copy.selectedIds;
+        setNodes(nodesRef.current); setConnections(connectionsRef.current); setSelectedNodeIds(copy.selectedIds);
+        setDialogNodeId(null); setToolbarNodeId(null); setHoveredNodeId(null);
+    }, [createHistoryEntry]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (rafRef.current) {
@@ -1346,8 +1368,11 @@ function InfiniteCanvasPage() {
             rafRef.current = null;
         }
         if (!dragRef.current.isDraggingNode) return;
+        const canceled = clientX == null || clientY == null;
+        if (!canceled) prepareNodeDrag(clientX, clientY);
+        const drag = dragRef.current;
 
-        const wasClick = !dragRef.current.hasMoved && dragRef.current.initialSelectedNodes.size === 1;
+        const wasClick = !canceled && !drag.hasMoved && drag.initialSelectedNodes.size === 1;
         const clickedNodeId = dragRef.current.initialSelectedNodes.keys().next().value;
         const currentViewport = viewportRef.current;
         const dx = clientX == null ? 0 : (clientX - dragRef.current.startX) / currentViewport.k;
@@ -1359,27 +1384,52 @@ function InfiniteCanvasPage() {
         nodeDraggingRef.current = false;
         setIsNodeDragging(false);
         setDropTargetGroupId(null);
-        if (dragRef.current.hasMoved && clientX != null && clientY != null) {
-            setNodes((prev) => {
-                const moved = prev.map((node) => {
-                    const initial = initialPositions.get(node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                });
-                const targetGroup = findGroupDropTarget(movedIds, moved);
-                if (targetGroup) return snapNodesIntoGroup(movedIds, moved, targetGroup);
-                return moved.map((node) => {
-                    if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
-                    const groupId = findContainingGroupId(node, moved);
-                    if (node.metadata?.groupId === groupId) return node;
-                    return { ...node, metadata: { ...node.metadata, groupId } };
-                });
+        if (canceled && drag.beforeCopy) {
+            const before = drag.beforeCopy;
+            const remaining = nodesRef.current.filter((node) => !movedIds.has(node.id));
+            const remainingConnections = connectionsRef.current.filter((connection) => !movedIds.has(connection.fromNodeId) && !movedIds.has(connection.toNodeId));
+            nodesRef.current = remaining.length === before.nodes.length && remaining.every((node, index) => node === before.nodes[index]) ? before.nodes : remaining;
+            connectionsRef.current = remainingConnections.length === before.connections.length && remainingConnections.every((connection, index) => connection === before.connections[index]) ? before.connections : remainingConnections;
+            selectedNodeIdsRef.current = drag.originalSelection;
+            setNodes(nodesRef.current); setConnections(connectionsRef.current); setSelectedNodeIds(drag.originalSelection);
+        } else if (drag.hasMoved && !canceled) {
+            const moved = nodesRef.current.map((node) => {
+                const initial = initialPositions.get(node.id);
+                return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
             });
+            const targetGroup = findGroupDropTarget(movedIds, moved);
+            const settled = targetGroup ? snapNodesIntoGroup(movedIds, moved, targetGroup) : moved.map((node) => {
+                if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
+                if (node.metadata?.groupId && movedIds.has(node.metadata.groupId)) return node;
+                const groupId = findContainingGroupId(node, moved);
+                if (node.metadata?.groupId === groupId) return node;
+                return { ...node, metadata: { ...node.metadata, groupId } };
+            });
+            nodesRef.current = settled;
+            setNodes(settled);
+            if (drag.beforeCopy) {
+                const current = createHistoryEntry(), original = drag.beforeCopy, last = lastHistoryRef.current;
+                const remaining = current.nodes.filter((node) => !movedIds.has(node.id));
+                const remainingConnections = current.connections.filter((connection) => !movedIds.has(connection.fromNodeId) && !movedIds.has(connection.toNodeId));
+                // Undo removes just this copy; results completed on original nodes during the gesture survive.
+                const before = { ...current,
+                    nodes: remaining.length === original.nodes.length && remaining.every((node, index) => node === original.nodes[index]) ? original.nodes : remaining,
+                    connections: remainingConnections.length === original.connections.length && remainingConnections.every((connection, index) => connection === original.connections[index]) ? original.connections : remainingConnections,
+                };
+                const uncommitted = last && Object.keys(before).some((key) => last[key as keyof CanvasHistoryEntry] !== before[key as keyof CanvasHistoryEntry]);
+                historyRef.current = { past: [...historyRef.current.past, ...(uncommitted ? [last] : []), before].slice(-50), future: [] };
+                lastHistoryRef.current = current;
+                setHistoryState({ canUndo: true, canRedo: false });
+            }
         }
 
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
         dragRef.current.initialSelectedNodes = new Map();
         dragRef.current.movedIds = new Set();
+        dragRef.current.beforeCopy = null;
+        dragRef.current.copyRequested = false;
+        dragRef.current.originalSelection = new Set();
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             const clickedDefinition = clickedNode ? getNodeDefinition(clickedNode.type) : undefined;
@@ -1394,35 +1444,31 @@ function InfiniteCanvasPage() {
                 }
             }
         }
-    }, []);
+    }, [createHistoryEntry, prepareNodeDrag]);
 
     const handleGlobalMouseMove = useCallback(
         (event: MouseEvent) => {
             const currentViewport = viewportRef.current;
 
             if (dragRef.current.isDraggingNode) {
+                prepareNodeDrag(event.clientX, event.clientY);
+                if (!dragRef.current.hasMoved) return;
                 const dx = (event.clientX - dragRef.current.startX) / currentViewport.k;
                 const dy = (event.clientY - dragRef.current.startY) / currentViewport.k;
                 const initialPositions = dragRef.current.initialSelectedNodes;
                 const movedIds = dragRef.current.movedIds;
-                if (Math.abs(event.clientX - dragRef.current.startX) > 3 || Math.abs(event.clientY - dragRef.current.startY) > 3) {
-                    dragRef.current.hasMoved = true;
-                }
 
                 // Drop-target detection and node updates both run once per frame; mousemove can fire far more often than the display refreshes.
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
                 rafRef.current = requestAnimationFrame(() => {
+                    if (!dragRef.current.isDraggingNode) return;
                     const previewNodes = nodesRef.current.map((node) => {
                         const initial = initialPositions.get(node.id);
                         return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
                     });
                     setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
-                    setNodes((prev) =>
-                        prev.map((node) => {
-                            const initial = initialPositions.get(node.id);
-                            return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                        }),
-                    );
+                    nodesRef.current = previewNodes;
+                    setNodes(previewNodes);
                     rafRef.current = null;
                 });
                 return;
@@ -1435,7 +1481,7 @@ function InfiniteCanvasPage() {
                 setMouseWorld(screenToCanvas(event.clientX, event.clientY));
             }
         },
-        [finishNodeDrag, getConnectionDropTarget, screenToCanvas],
+        [prepareNodeDrag, getConnectionDropTarget, screenToCanvas],
     );
 
     const handleGlobalPointerMove = useCallback(
@@ -1500,11 +1546,19 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         const handlePointerUp = (event: PointerEvent) => finishNodeDrag(event.clientX, event.clientY);
         const cancelNodeDrag = () => finishNodeDrag();
+        const cancelCopyOnEscape = (event: KeyboardEvent) => {
+            if (!dragRef.current.isDraggingNode || !dragRef.current.copyRequested) return;
+            const key = event.key.toLowerCase();
+            const historyShortcut = (event.ctrlKey || event.metaKey) && (key === "z" || key === "y");
+            if (key !== "escape" && !historyShortcut) return;
+            event.preventDefault(); event.stopImmediatePropagation(); finishNodeDrag();
+        };
         window.addEventListener("mousemove", handleGlobalMouseMove);
         window.addEventListener("mouseup", handleGlobalMouseUp);
         window.addEventListener("pointerup", handlePointerUp);
         window.addEventListener("pointercancel", cancelNodeDrag);
         window.addEventListener("blur", cancelNodeDrag);
+        window.addEventListener("keydown", cancelCopyOnEscape, true);
         window.addEventListener("pointermove", handleGlobalPointerMove);
         return () => {
             window.removeEventListener("mousemove", handleGlobalMouseMove);
@@ -1512,6 +1566,7 @@ function InfiniteCanvasPage() {
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", cancelNodeDrag);
             window.removeEventListener("blur", cancelNodeDrag);
+            window.removeEventListener("keydown", cancelCopyOnEscape, true);
             window.removeEventListener("pointermove", handleGlobalPointerMove);
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
@@ -1623,6 +1678,9 @@ function InfiniteCanvasPage() {
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
+            if (dragRef.current.isDraggingNode && ((isModifierShortcut && ["z", "y", "a", "c", "v", "g"].includes(key)) || key === "delete" || key === "backspace")) {
+                event.preventDefault(); return;
+            }
 
             if (isModifierShortcut && key === "c" && window.getSelection()?.toString()) return;
 
@@ -3397,6 +3455,8 @@ function InfiniteCanvasPage() {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
+                    onBatchDownload={(node) => void downloadImages([node.id], nodesRef.current, node.title || "分组图片")}
+                    batchDownloading={batchDownloading}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
                     onPaint={(node) => setPaintNodeId(node.id)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
@@ -3423,6 +3483,8 @@ function InfiniteCanvasPage() {
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
                         onGrid={() => setGridOpen(true)}
+                        onDownload={() => void downloadImages(selectedNodeIdsRef.current, nodesRef.current)}
+                        downloading={batchDownloading}
                     />
                 ) : null}
 
