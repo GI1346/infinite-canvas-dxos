@@ -21,6 +21,7 @@ description: Implemented changes that still need manual verification
 - `node tests/run-image-preview.cjs` 的真实 React DOM 交互通过：鼠标点双向及连续缩放、左拖、Ctrl 隔离、捕获释放、失焦 / 取消、重置、竖图 / 换图 / 重开与错误 / 关闭，背景画布未变。独立浏览器 fixture 实际滚轮缩放 55% → 117%，左键拖动 75 / 60 后背景仍不动；证据 `.checks/preview-0207-browser.png`。未改动用户画布。
 - `node tests/run-relay-offscreen-0207.cjs` 运行真实 Concurrent 组件和 `requestRelayImage` 链路，auto + 2K / 4K 各两行均验证原生提交、等待查询期间移出视口不取消、成功输出、任务 ID / 结果持久化且不重复提交。仅网络 I/O mock，不使用真实 Key、不收费，不宣称真实远端账号或最终像素已验收。
 - `node desktop/tests/downloads-runtime.check.cjs` 在隔离真实 Electron 中运行生产 main / preload；验证目录取消零落盘、指定目录原 PNG 字节、中文重命名、重名保护、无默认目录回退、空选择不弹框和不可信 IPC 拒绝。原生 dialog stub，不等同实际原生弹窗点击。GPU 环境需要的 switches 仅用于测试，没有修改生产启动业务。结果 `.checks/downloads-runtime-0207-result.json`。
+- 发布核验：GitHub `v0.20.7` 源码树与发布提交对应本地发布树 `9177194f9684bf058adafcab666a1ef58ef29c34`；安装包远端 SHA256 与本地一致，源码 ZIP SHA256 `424608bf3f0a4df86af249b1037b683ebbfbaf655f35816f4b73a8cc8ad2620d`。400 图片浏览器平移落点 140 / 70 与样式一致；快捷键灵敏度改为 80 后刷新仍保留，随后恢复测试默认 50。专项 `run-navigation-audit-0207.cjs` 通过定位动画打断、四档缩放及 864 组边界范围用例。
 - 0.20.7 TypeScript、生产构建及 NSIS x64 打包通过；16 个前端文件、4 个桌面模块和实际安装器解出的 78 文件逐字节一致，应用 / 安装器版本与七帧图标通过。安装包 96,784,953 字节，SHA256 `a4a0a92f1a6775d7acbe39578b70a39e5890bb982b76e24bcc2136fb87af1e05`。未执行安装向导或覆盖注册安装。发布状态以 [v0.20.7 Release](https://github.com/GI1346/infinite-canvas-dxos/releases/tag/v0.20.7) 实际附件为准；源码树和远端附件校验成功后才删除旧安装包，本地保留一份最新版。不上传真实 Key 或用户数据。
 
 ## Installation-relative desktop storage

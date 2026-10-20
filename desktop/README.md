@@ -4,7 +4,7 @@ BlinkFlow 保留开源画布的多维表格、并发生成和自定义中转协�
 
 ## 下载与升级
 
-从 [本仓库 Releases](https://github.com/GI1346/infinite-canvas-dxos/releases) 下载实际已发布的 `BlinkFlow-Setup-<版本>-x64.exe`。本轮工作版本为 `0.20.7`，包含图片预览、离屏生成、滚轮灵敏度、真实像素、桌面批量下载、auto 比例与分辨率独立传递及平移性能优化。源码上传、安装包构建与发布核验尚未完成，不把旧版附件作为本轮成果；发布状态与附件以 Release 实际页面为准，校验值见附件 `SHA256SUMS.txt`。
+从 [本仓库 Releases](https://github.com/GI1346/infinite-canvas-dxos/releases) 下载实际已发布的 `BlinkFlow-Setup-<版本>-x64.exe`。本轮工作版本为 `0.20.7`，包含图片预览、离屏生成、滚轮灵敏度、真实像素、桌面批量下载、auto 比例与分辨率独立传递及平移性能优化。源码和安装包已发布到 [v0.20.7 Release](https://github.com/GI1346/infinite-canvas-dxos/releases/tag/v0.20.7)，远端安装包与源码 ZIP 的 SHA256 已与本地核对一致；校验值见 `SHA256SUMS-0.20.7.txt`。
 
 应用 ID、稳定本机地址 `http://127.0.0.1:17456` 和数据键保持不变。新版桌面存储代码将数据统一置于**安装时选择的程序目录**下的 `BlinkFlowData`，不是下载的安装包所在目录。首次启动复制并逐文件校验旧 `%APPDATA%/Infinite Canvas DXOS` 桌面数据；完成标记写入后不再重复迁移。原目录不删除，也不提供清理旧目录按钮。请先退出旧版再启动新版。纯浏览器版的数据不会自动转入桌面版。
 
