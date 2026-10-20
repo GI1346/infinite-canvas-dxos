@@ -1,0 +1,20 @@
+{
+  "source": "D:/C盘位置更改/下载/DXOS-Portable-0.5.4-win-x64/data/developer-apps/.versions/canvas/1.0.296+10296-43c7498c/source/assets/index-BGZnP3Qr.js",
+  "sha256": "96622ebbbb6b61e4d4778fdd9042ba9fb69dca563272ffb17ae69d4be8f5e293",
+  "canvasVersion": "1.0.296",
+  "hostRuntime": "0.6.4",
+  "schema": "kind:table,version:1,columns,rows,selectedRows,mergedGroups",
+  "functions": [
+    "dS",
+    "VM",
+    "FM",
+    "so",
+    "R4",
+    "Jb",
+    "ju",
+    "xr",
+    "sh",
+    "Kb"
+  ],
+  "note": "仅移植多维表格数据与连线批处理语义；Vue 编译界面适配为宿主 React 节点，未包含 DXOS 的账户、更新、API 密钥或用户数据。"
+}
