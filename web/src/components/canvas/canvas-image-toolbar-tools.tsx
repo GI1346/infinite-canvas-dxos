@@ -4,12 +4,13 @@ import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scis
 import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
 
-export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
+export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "paint" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
+    onPaint: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
@@ -41,6 +42,7 @@ export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
 const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
+    { id: "paint", defaultVisible: true, label: "画笔", title: "画笔", icon: () => <Brush className="size-4" />, run: (node, handlers) => handlers.onPaint(node) },
     {
         id: "copyPrompt",
         defaultVisible: true,
@@ -85,16 +87,16 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     {
         id: "crop",
         defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.crop"),
-        title: () => i18n.t("canvas.imageTools.cropTitle"),
+        label: "裁剪/扩图",
+        title: "裁剪/扩图",
         icon: () => <Scissors className="size-4" />,
         run: (node, handlers) => handlers.onCrop(node),
     },
     {
         id: "split",
         defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.split"),
-        title: () => i18n.t("canvas.imageTools.splitTitle"),
+        label: "多宫格裁剪",
+        title: "多宫格裁剪",
         icon: () => <Grid2x2 className="size-4" />,
         run: (node, handlers) => handlers.onSplit(node),
     },

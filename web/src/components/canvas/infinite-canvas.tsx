@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -12,13 +12,14 @@ type InfiniteCanvasProps = {
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
-    onCanvasDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
-    onContextMenu?: (event: React.MouseEvent) => void;
+    onCanvasContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void;
+    onConnectionCutStart?: (event: React.PointerEvent<HTMLDivElement>) => boolean;
+    isCuttingConnections?: boolean;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasContextMenu, onConnectionCutStart, isCuttingConnections = false, onDrop, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -29,16 +30,19 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         hasMoved: false,
         startedOnBackground: false,
     });
-    const scaleRef = useRef(viewport.k);
+    const spaceRef = useRef(false);
+    const suppressClickRef = useRef(false);
+    const cuttingRef = useRef(isCuttingConnections);
+    cuttingRef.current = isCuttingConnections;
+    const viewportRef = useRef(viewport);
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
-    const [isControlPressed, setIsControlPressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
 
-    useEffect(() => {
-        scaleRef.current = viewport.k;
-    }, [viewport.k]);
+    useLayoutEffect(() => {
+        viewportRef.current = viewport;
+    }, [viewport]);
 
     useEffect(
         () => () => {
@@ -48,82 +52,120 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     );
 
     useEffect(() => {
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === "Control") setIsControlPressed(true);
-            if (event.code !== "Space") return;
-            const target = event.target instanceof Element ? event.target : null;
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']")) return;
+        const isTextEditing = (target: EventTarget | null) => {
+            if (!(target instanceof Element)) return false;
+            const input = target.closest("input");
+            if (input instanceof HTMLInputElement) return !input.readOnly && !input.disabled && !["button", "submit", "reset", "checkbox", "radio", "range", "color", "file", "image", "hidden"].includes(input.type);
+            const textarea = target.closest("textarea");
+            if (textarea instanceof HTMLTextAreaElement) return !textarea.readOnly && !textarea.disabled;
+            const editable = target.closest("[contenteditable]");
+            return Boolean(editable && editable.getAttribute("contenteditable") !== "false");
+        };
+        const isCanvasKeyTarget = (target: EventTarget | null) => {
+            if (!(target instanceof Element)) return true;
+            return !target.closest("[data-canvas-overlay],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown,[data-connection-create-menu]") && !(target.closest("[data-canvas-no-zoom]") && !target.closest("[data-node-id]")) && (containerRef.current?.parentElement?.contains(target) || target === document.body || target === document.documentElement);
+        };
+        const captureSpace = (event: KeyboardEvent) => {
             event.preventDefault();
+            event.stopPropagation();
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.code !== "Space" || (!spaceRef.current && (isTextEditing(event.target) || !isCanvasKeyTarget(event.target)))) return;
+            captureSpace(event);
+            if (spaceRef.current) return;
+            spaceRef.current = true;
             setIsSpacePressed(true);
         };
 
         const handleKeyUp = (event: KeyboardEvent) => {
-            if (event.code === "Space") {
-                const target = event.target instanceof Element ? event.target : null;
-                if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']"))) event.preventDefault();
-                setIsSpacePressed(false);
-            }
-            if (event.key === "Control") setIsControlPressed(false);
+            if (event.code !== "Space") return;
+            if (spaceRef.current || (!isTextEditing(event.target) && isCanvasKeyTarget(event.target))) captureSpace(event);
+            spaceRef.current = false;
+            setIsSpacePressed(false);
         };
 
         const handleBlur = () => {
+            spaceRef.current = false;
             setIsSpacePressed(false);
-            setIsControlPressed(false);
             panState.current.isPanning = false;
+            if (frameRef.current) cancelAnimationFrame(frameRef.current);
+            frameRef.current = null;
+            nextViewportRef.current = null;
             setIsPanning(false);
             document.body.style.cursor = "";
         };
 
-        window.addEventListener("keydown", handleKeyDown);
-        window.addEventListener("keyup", handleKeyUp);
+        window.addEventListener("keydown", handleKeyDown, true);
+        window.addEventListener("keyup", handleKeyUp, true);
         window.addEventListener("blur", handleBlur);
         return () => {
-            window.removeEventListener("keydown", handleKeyDown);
-            window.removeEventListener("keyup", handleKeyUp);
+            window.removeEventListener("keydown", handleKeyDown, true);
+            window.removeEventListener("keyup", handleKeyUp, true);
             window.removeEventListener("blur", handleBlur);
         };
-    }, []);
+    }, [containerRef]);
 
-    const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const handleWheel = (event: WheelEvent) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
+        if (target?.closest(".ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown") || (target?.closest("[data-canvas-no-zoom]") && !target.closest("[data-node-id]"))) return;
 
+        if (cuttingRef.current) { event.preventDefault(); event.stopPropagation(); return; }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const current = nextViewportRef.current || viewportRef.current;
+        if (frameRef.current) cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+        nextViewportRef.current = null;
         const delta = -event.deltaY;
         const factor = Math.pow(1.1, delta / 100);
-        const newScale = Math.min(Math.max(viewport.k * factor, 0.05), 5);
+        const newScale = Math.min(Math.max(current.k * factor, 0.05), 5);
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
         const mouseX = event.clientX - rect.left;
         const mouseY = event.clientY - rect.top;
-        const worldX = (mouseX - viewport.x) / viewport.k;
-        const worldY = (mouseY - viewport.y) / viewport.k;
+        const worldX = (mouseX - current.x) / current.k;
+        const worldY = (mouseY - current.y) / current.k;
 
-        onViewportChange({
+        const next = {
             x: mouseX - worldX * newScale,
             y: mouseY - worldY * newScale,
             k: newScale,
-        });
+        };
+        if (panState.current.isPanning) {
+            panState.current.initialX += next.x - current.x;
+            panState.current.initialY += next.y - current.y;
+        }
+        viewportRef.current = next;
+        onViewportChange(next);
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom]")) return;
+        if (target?.closest("[data-canvas-overlay],.ant-modal,.ant-popover,.ant-dropdown") || (target?.closest("[data-canvas-no-zoom]") && !target.closest("[data-node-id]"))) return;
         if (target?.closest("[data-connection-create-menu]")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
-        const temporaryTool = event.ctrlKey || isSpacePressed;
-        const activeTool = temporaryTool ? (tool === "select" ? "pan" : "select") : tool;
-        const shouldPan = event.button === 1 || (event.button === 0 && activeTool === "pan" && isBackgroundClick);
+        const shouldPan = event.button === 1 || (event.button === 0 && (spaceRef.current || (tool === "pan" && isBackgroundClick)));
+
+        if (event.button === 0 && event.ctrlKey && !spaceRef.current && !target?.closest("input,textarea,select,button,a,[role='button'],[contenteditable]:not([contenteditable='false']),[data-node-toolbar],[data-node-handle]")) {
+            if (onConnectionCutStart?.(event)) {
+                event.preventDefault(); event.stopPropagation(); suppressClickRef.current = true; cuttingRef.current = true;
+                event.currentTarget.setPointerCapture(event.pointerId); return;
+            }
+        }
 
         if (shouldPan) {
+            suppressClickRef.current = true;
             event.preventDefault();
+            event.stopPropagation();
             event.currentTarget.setPointerCapture(event.pointerId);
             panState.current = {
                 isPanning: true,
                 startX: event.clientX,
                 startY: event.clientY,
-                initialX: viewport.x,
-                initialY: viewport.y,
+                initialX: viewportRef.current.x,
+                initialY: viewportRef.current.y,
                 hasMoved: false,
                 startedOnBackground: isBackgroundClick,
             };
@@ -132,6 +174,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             return;
         }
 
+        suppressClickRef.current = false;
         if (event.button === 0 && isBackgroundClick) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
@@ -139,10 +182,11 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         }
     };
 
-    const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom],[data-node-id],[data-connection-id]")) return;
-        onCanvasDoubleClick?.(event);
+        if (event.defaultPrevented || target?.closest("[data-node-id],[data-connection-id],[data-canvas-overlay],[data-canvas-no-zoom],[data-connection-create-menu],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown,input,textarea,select,[contenteditable]:not([contenteditable='false'])")) return;
+        event.preventDefault();
+        onCanvasContextMenu?.(event);
     };
 
     useEffect(() => {
@@ -158,12 +202,14 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             nextViewportRef.current = {
                 x: panState.current.initialX + dx,
                 y: panState.current.initialY + dy,
-                k: scaleRef.current,
+                k: viewportRef.current.k,
             };
             if (frameRef.current) return;
             frameRef.current = requestAnimationFrame(() => {
                 frameRef.current = null;
-                if (nextViewportRef.current) onViewportChange(nextViewportRef.current);
+                const next = nextViewportRef.current;
+                nextViewportRef.current = null;
+                if (next) { viewportRef.current = next; onViewportChange(next); }
             });
         };
 
@@ -196,26 +242,25 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         // Prevent canvas scrolling from moving the page while preserving native scrolling inside overlays and dialogs.
         const preventWheelScroll = (event: WheelEvent) => {
             const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
-            event.preventDefault();
+            if (target?.closest(".ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown") || (target?.closest("[data-canvas-no-zoom]") && !target.closest("[data-node-id]"))) return;
+            handleWheel(event);
         };
-        container.addEventListener("wheel", preventWheelScroll, { passive: false });
-        return () => container.removeEventListener("wheel", preventWheelScroll);
-    }, [containerRef]);
+        container.addEventListener("wheel", preventWheelScroll, { passive: false, capture: true });
+        return () => container.removeEventListener("wheel", preventWheelScroll, true);
+    }, [containerRef, viewport, onViewportChange]);
 
-    const temporaryTool = isControlPressed || isSpacePressed;
-    const activeTool = temporaryTool ? (tool === "select" ? "pan" : "select") : tool;
-    const cursor = isPanning ? "grabbing" : activeTool === "pan" ? "grab" : undefined;
+    const activeTool = isSpacePressed ? "pan" : tool;
+    const cursor = isCuttingConnections ? "crosshair" : isPanning ? "grabbing" : activeTool === "pan" ? "grab" : undefined;
 
     return (
         <div
             ref={containerRef}
-            className="relative h-full w-full select-none overflow-hidden"
+            className="relative h-full w-full select-none overflow-clip"
             style={{ background: theme.canvas.background, cursor }}
-            onPointerDown={handlePointerDown}
-            onDoubleClick={handleDoubleClick}
-            onWheel={handleWheel}
-            onContextMenu={onContextMenu}
+            onPointerDownCapture={handlePointerDown}
+            onMouseDownCapture={(event) => { if (panState.current.isPanning || cuttingRef.current) { event.preventDefault(); event.stopPropagation(); } }}
+            onClickCapture={(event) => { if (suppressClickRef.current) { event.preventDefault(); event.stopPropagation(); suppressClickRef.current = false; } }}
+            onContextMenu={handleContextMenu}
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >

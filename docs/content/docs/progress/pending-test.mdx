@@ -5,9 +5,100 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
-- Canvas cleanup: open 清理 in the canvas top bar; verify current/all canvas scope, input/output image removal with nodes, wiring, table cells, prompts and model selections preserved; assets remain unless explicitly selected. Workbench history/log cleanup is global. Check shared images remain while referenced by untouched canvases, assets or retained logs. Download the ZIP before confirming; import it to restore affected canvases and removed local images/log records without altering providers, keys or protocols. Reject cleanup during running generation/Agent tasks. Reload clears local undo/redo and in-memory logs; external Agent/WebDAV records are not removed.
+## BlinkFlow 0.20.3 / DX image editing and LLM integration
 
-The current release needs manual verification in these areas:
+- Brand is now BlinkFlow in the app title, navigation/home logo, favicon/manifest and Windows installer. The supplied full-color PNG is byte-identical; ICO includes seven sizes. Keep app ID, stable `127.0.0.1:17456` origin, storage keys and the existing `Infinite Canvas DXOS` userData directory. Never rename user canvases or reset API settings during upgrade.
+- The built-in drawing channel is labeled **65535 绘画（独立密钥）**. Only old built-in default labels are upgraded; custom names, URLs, independent keys and model/protocol bindings are unchanged. Drawing and conversation credentials remain separate.
+- Image tools pin Paint, Crop/Expand and Grid Crop above the persistent title. These are local original-pixel operations, creating connected result nodes without changing the original or charging AI. Paint annotations differ from the existing blue-mask AI editing tool. Crop can extend beyond original bounds with transparent/chosen fill; grid exports selected slices at their true dimensions. Editor wheel / Space pan does not move the parent canvas.
+- LLM accepts connected image groups and text, with an explicit configured text platform and model. Switching platform clears the model selection; missing platform/model/key blocks rather than falling back. One request yields text or strict version-1 table JSON. Each image source group retains a separate image-only table input; text columns are editable and not overwritten. List rows use the returned JSON row count, not the longer source-group count. Stop/restart, deletion and unmount discard late results; successful reruns create new outputs.
+- Concurrent controls now use aspect ratio and resolution to compute dimensions automatically; the duplicate free-form size input is removed. Focused buttons do not repeatedly activate while Space is held, but editors accept spaces.
+- Ctrl + left sweep cuts crossed connections with a 220ms split/fade animation and one undo/redo entry per gesture. Dedicated real React DOM checks passed 15/15, including cancellation, coalesced movement, persistence and zoom 0.05–5. The browser driver cannot hold Ctrl during a drag; this physical gesture is not claimed as browser-tested. Table/concurrent/LLM blank dragging and input 2–5 endpoints passed both dedicated checks (10/10) and browser interaction. Editable controls, selectable text and actual scroll areas remain protected.
+
+### Current executed checks
+
+Independent test data and mocked transport do not establish real-account acceptance.
+
+| Command in `web` | Recorded result |
+| --- | --- |
+| `node tests/run-llm-node.cjs` | 16/16 passed; real React node/host/request chain, mocked network |
+| `node tests/run-relay.cjs` | 27/27 passed including default drawing-label upgrade; prior workflow regression passed |
+| `node tests/run-interactions.cjs` | Interaction regression 30/30 passed |
+| `node tests/run-connection-cut.cjs` | 15/15 passed |
+| `node tests/run-workflow-drag-ports.cjs` | 10/10 passed |
+| `node tests/run-image-tools.cjs` | 11/11 passed |
+| `node tests/run-crop-expand.cjs` | 10/10 passed |
+| `node tests/run-grid-crop.cjs` | 6/6 passed |
+| `node tests/run-editor-space.cjs` | 3/3 passed |
+| `node tests/run-settings-popover.cjs` | 2/2 passed |
+| `node tests/run-unit-node.cjs` | 15/15 passed |
+| `node tests/run-channel-protocol-ui.cjs` | 5/5 passed |
+| `node tests/run-protocol-center.cjs` | 5 groups passed |
+| `npm run test:cleanup` | Cleanup and IndexedDB transactions passed |
+| `npx tsc --noEmit` | Passed |
+
+Brand checks confirmed unchanged original PNG, decodable ICO frames, preserved app identity/profile/origin and user canvas default names. Web TypeScript and production build passed; desktop validation is recorded separately below.
+
+### Fresh real-browser / account acceptance
+
+- LLM text mode completed and created a connected text output.
+- A blue image was submitted through LLM list mode and produced one editable table row; its concurrent downstream correctly kept one row and the image/text mapping.
+- Prior independent-channel discovery, native image generation/reference editing, protocol renaming, right-click creation and image settings checks remain listed below; they do not imply installer acceptance.
+
+**Desktop package check:** NSIS x64 build passed. The 96,694,836-byte installer SHA256 is `bbfdd46d56c35a11c33cd8efe0a3cbb96b4c52a252cb019e088df517f96e7a9b`. Sixteen dist files and 76 extracted payload files match byte-for-byte; version and seven icon frames match. Its extracted program served the actual 0.20.3 production page on 17456 with correct branding and channel labels. No registered installation was replaced, and native-window visual/installation acceptance is not claimed. Release assets include checksums; retain **one latest local installer**, source and no keys/user data.
+
+
+## Windows integration scope retained for 0.20.3
+
+The following scope belongs to the current Windows branch. Record developer-run test results here; do not treat a pending item as passed or require the user to repeat the requirements. See the [desktop guide](https://github.com/GI1346/infinite-canvas-dxos/blob/main/desktop/README.md) for Chinese operating instructions.
+
+1. Built-in relay channels: image models use `https://sub-proxy-us.65535.space`; text models use `https://api2-cn.65535.space`. Both default keys are blank and configured independently. Model-list requests and generation must use the selected channel's own key; no fallback to the other channel.
+2. Native image tasks: submit to the image channel's task endpoint, store the returned ID, poll every 3 seconds with exponential backoff for 429, distinguish `pending/running/done/failed`, continue on unknown states, and retain the ID after the existing 10-minute timeout or local cancellation. Resume through the asynchronous-task panel without resubmitting. Reference images, model and size must match the request. Do not mix native and APIMart field names.
+3. Real model discovery: save both independent keys and fetch each channel's actual models. No hard-coded placeholder list should be presented as a successful fetch, and a saved key alone is not connection verification.
+4. Table/concurrent node dragging: use the always-visible title, internal handle or body blank area; editing cells, input ports, selections and the table-to-concurrent connection must keep working.
+5. Always-visible titles: every node type keeps its title visible when neither hovered nor selected, including tables, concurrent nodes and groups.
+6. Concurrent generation controls: select a channel/model, resolution, aspect ratio and image quality; dimensions are computed from aspect ratio/resolution with no duplicate size input; confirm the corresponding values reach the generation request while per-row selection, start row, concurrency, stop and retry remain intact.
+7. Navigation over nodes: left drag selects by default, Space + left drag pans, plain wheel zooms. Panning/zooming must work over images, tables, inputs and concurrent-node controls without moving nodes; Space still enters text inside an active text editor. Dialog/dropdown scrolling remains native.
+8. Rename/download: rename every node type and download primary/alternative images with the saved title, adding a suffix only when multiple files need distinct names.
+9. Grid arrangement: select at least two nodes, set columns/gap, and align them without image distortion or lost connections. Selected groups move as units, preserving child offsets. This is node arrangement, not image compositing.
+10. Direct cleanup: select current/all canvas scope and image/history/log options, then clean without creating or downloading a ZIP. Keep nodes, wiring, table cells, prompts, selected models, provider URLs, both independent keys and custom protocols. Assets remain unless selected; referenced images remain while another canvas, retained asset or unselected log uses them. Selecting logs also clears local `relay_tasks`; leaving logs unchecked preserves them. Reject cleanup during active generation/Agent tasks. Reload clears local undo/redo and in-memory logs; computer originals and external Agent/WebDAV/relay records are not removed.
+11. Theme: Pure white uses a white canvas; Warm uses the former light canvas colors. Theme labels and popups follow the selected palette rather than the old dark palette.
+12. Distribution: publish source and the Windows x64 installer to `GI1346/infinite-canvas-dxos`; verify the uploaded attachment's name, size and checksum, then retain one latest local installer and remove superseded build outputs. Keep source; never publish keys or user data.
+
+Additional implemented behavior: the toolbar exposes explicit table/concurrent creation buttons; channel protocol selection lists saved protocol labels and the native async option, while model bindings/scripts override the channel default. Renaming an existing protocol changes its label only, retains its stable ID/script/bindings, and persists; deletion guards both channel and model bindings. Downloads use the renamed title without repeated extensions and preserve the actual MIME format. Grid arrangement moves all descendants of nested groups. Continuous wheel frames use the latest viewport around the mouse point, and manual navigation cancels pending focus animation to avoid rebound.
+
+**Additional accepted interaction:** one right-click on blank canvas opens the node selector directly; double-clicking blank canvas no longer opens it. Existing node double-click editing/preview, title double-click rename and node context menus remain. The interaction suite now includes this entry behavior; real-browser right-click / blank-double-click checks also passed. Image/video settings popovers no longer trigger background selection when clicked, and their controls retain the selected node.
+
+### Executed automated checks
+
+Run from `web`; these checks use independent test data, not real relay credentials:
+
+| Command | Actual result |
+| --- | --- |
+| `node tests/run-relay.cjs` | Native relay 27/27 passed (includes built-in drawing-label upgrade); prior table/custom-protocol workflow regression passed |
+| `node tests/run-interactions.cjs` | Interaction checks 30/30 passed |
+| `node tests/run-settings-popover.cjs` | Image/video settings popover interaction checks 2/2 passed |
+| `node tests/run-unit-node.cjs` | Unit checks 15/15 passed |
+| `node tests/run-channel-protocol-ui.cjs` | Channel-protocol React UI checks 5/5 passed |
+| `node tests/run-protocol-center.cjs` | Protocol-center React/persistence checks, 5 groups passed |
+| `npm run test:cleanup` | Cleanup rules and IndexedDB transaction checks passed |
+| `npx tsc --noEmit` | Type check passed |
+
+Cleanup coverage includes direct cleanup with a zero-byte backup, current/all scopes, protected shared/history image references, preserving unselected image/video/task logs, clearing `relay_tasks` when logs are selected, image preservation in logs-only cleanup, and byte-for-byte unchanged API configuration and custom-protocol JSON in their real storage keys. Existing ZIP restore/rejection tests remain regression coverage, not a visible backup requirement.
+
+### Executed real-browser / account checks
+
+- Fetched and exposed selectable actual model lists with independent image/text keys: 9 image models and 5 text models. These counts describe this account response, not hard-coded catalogs.
+- Real `gpt-5.6-sol` completion returned `65535对话连通验收成功`.
+- Real `gpt-image-2` request with `1024x1024` and `low` completed through native tasks to `done`, and its result was inserted into the canvas. The first attempt returned `401`; re-saving the image key resolved authentication. The text key was not substituted for the image key.
+- Real reference-image editing also completed: a blue-circle image was used as input and changed to a green circle at `1024x1024`, `low`, one image. The result reached the canvas; the original generation and reference-edit tasks both reported `done`.
+- Created a temporary protocol in the real browser, renamed it, and selected its new label from the channel protocol dropdown. The channel editor was canceled so the original channel setting was not overwritten.
+- In the real browser, one blank-canvas right-click displayed the node selector and blank double-click did not open it. Image settings retained `low` quality and a count of one without a background selection intercepting clicks.
+
+Desktop packaging and extracted-payload startup checks are recorded above, separately from real API and development-browser acceptance. An actual overwrite installation was deliberately not executed because NSIS may uninstall the existing same-appId version. See Release assets and checksums for the published binaries.
+
+## Retained upstream acceptance checklist
+
+The following broader upstream items remain listed for scope transparency; they are not all newly validated by this release:
 
 - Saved model selection: save a canvas node with a model, then remove its provider or remove that model while another video model remains the default. Generation, retry and pending-video recovery should keep the unavailable model selected and open configuration instead of sending a request to the default or first provider. Re-selecting a valid model should allow generation. Changing only the API key on the same provider should preserve the model; switching a config node from a valid image model to video should still use the video default.
 
@@ -30,7 +121,7 @@ The current release needs manual verification in these areas:
 - Group selected nodes: after selecting two or more nodes, a rounded dashed bound should wrap the whole selection, with Group above it. It wraps those nodes in a group without moving them, then selects the new group. Selecting a group should allow Ungroup from the hover toolbar, context menu, or `Ctrl/Cmd+Shift+G`. Nodes already in the same group should show Ungroup instead of grouping again. Dragging into a group, group references, and the left-panel tree should keep working.
 - Node reference bar: regular prompt panels, expanded editors, and generation-config inputs should show their current input nodes above the editor. Images and videos should use thumbnails with hover previews, while text, audio, and extension nodes show their matching type. A group connection should expand into every valid content node inside the group, and removing any expanded item should disconnect the whole group. The plus button should enter canvas selection for adding multiple valid references. Connected nodes, the target itself, children already referenced through a group, and unsupported nodes must not be selectable again; ESC or the top hint should return to the input, and new connections should immediately update the `@` list.
 - Multi-image transparency: when a multi-image node containing transparent PNG or WebP assets is expanded, transparent areas in both the primary and alternatives should reveal the canvas; switching primary images must not introduce a white or panel-colored background.
-- Canvas navigation: the canvas should open in Move mode by default, and the bottom toolbar should switch between Select and Move modes and reflect the active mode with its icon; Select should draw a clearly spaced dashed range whose dash length, gap, and stroke width remain visually constant at every zoom level, while Move should drag elements directly and pan only when dragging the blank background. Clicking blank canvas space in either mode should deselect the current node and close its top toolbar and lower prompt panel. Holding Control or Space should temporarily invert the active tool without changing the toolbar mode: Select becomes Move, and Move becomes range selection. After clicking any canvas-page button, pressing Space should only invert the tool and must not trigger that button again. Middle-button panning from any position and additive node selection with Shift/Cmd should continue to work, while Space remains available inside text inputs and editable content.
+- Canvas navigation: this Windows branch supersedes the earlier Move-default / Space-toggle behavior. Open in Select mode; left drag on blank canvas range-selects, Space + left drag always pans rather than toggling the current mode, and plain wheel zooms even above nodes. Clicking blank canvas should deselect and close node panels; node editing, middle-button panning and additive selection remain available. Space in text inputs/editable content must enter text rather than pan or retrigger a focused button.
 - English routes without a locale prefix should load directly without a redirect loop; switching between English and Simplified Chinese should keep navigation, settings, titles, descriptions, Ant Design components, and persisted preferences in the selected language.
 - Global Dropdown, Menu, Select, Cascader, and TreeSelect popup backgrounds, hover states, and selected states in both light and dark themes.
 - Canvas node resize stability: importing an image should open its prompt panel, resizing it immediately from any corner should temporarily hide the panel, remain smooth without flashing or triggering a maximum update depth error, and restore the panel after release. Prompt scrolling, generated-prompt restoration, edit-prompt persistence after closing an existing image or text node panel, expanded prompt editing with live synchronization and `@` references, image editing, drag-and-drop references, and generation configuration should continue to work.

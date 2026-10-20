@@ -1,0 +1,26 @@
+{
+  "source": "DXOS-Portable-0.5.4-win-x64/data/developer-apps/.versions/canvas/1.0.296+10296-43c7498c/source/assets/index-BGZnP3Qr.js",
+  "sha256": "96622ebbbb6b61e4d4778fdd9042ba9fb69dca563272ffb17ae69d4be8f5e293",
+  "canvasVersion": "1.0.296",
+  "tools": [
+    {
+      "id": "brush",
+      "label": "画笔",
+      "sourceFunction": "YO",
+      "semantics": "透明涂绘层合成原图；自由绘画、箭头、序号、矩形/圆形、颜色/粗细/透明度、撤销重做"
+    },
+    {
+      "id": "crop",
+      "label": "裁剪/扩图",
+      "sourceFunction": "WO",
+      "semantics": "归一化选区可超出原图；原像素位置裁剪/填充背景扩展"
+    },
+    {
+      "id": "grid-crop",
+      "label": "多宫格裁剪",
+      "sourceFunction": "KO",
+      "semantics": "行列或自定义切线按原图像素切片，输出为独立新图片"
+    }
+  ],
+  "note": "保留DX图片编辑的本地像素操作与原图另存语义，适配宿主React、主题、图片存储与节点连线。未包含DX账户、用户数据或密钥。"
+}

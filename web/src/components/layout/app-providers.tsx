@@ -31,8 +31,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
     const locale = i18n.resolvedLanguage as AppLocale;
 
     useEffect(() => {
-        document.documentElement.classList.toggle("dark", dark);
-        document.documentElement.style.colorScheme = theme;
+        document.documentElement.classList.remove("dark");
+        document.documentElement.classList.toggle("warm", dark);
+        document.documentElement.style.colorScheme = "light";
     }, [dark, theme]);
 
     useEffect(() => {
@@ -44,7 +45,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
     return (
         <ConfigProvider locale={locale === "zh-CN" ? zhCN : enUS} theme={getAntThemeConfig(dark)}>
-            <ProConfigProvider dark={dark}>
+            <ProConfigProvider dark={false}>
                 <App>
                     <QueryClientProvider client={queryClient}>
                         <ClientRootInit>{children}</ClientRootInit>

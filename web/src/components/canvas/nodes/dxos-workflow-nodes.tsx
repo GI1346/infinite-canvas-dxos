@@ -3,7 +3,9 @@ import { Layers, Table2 } from "lucide-react";
 import { nanoid } from "nanoid";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
 import type { CanvasNodeMetadata } from "@/types/canvas";
+import { stopWorkflowControlDrag } from "@/components/canvas/workflow-node-interactions";
 import { TABLE_TYPE, CONCURRENT_TYPE, channelsFor, channelItems, itemAt, emptyTable, readTable, tableRows, generationRows, selectedGenerationRows, deleteTableRow, runRowPool, type DxTable, type DxBatchRun } from "@/lib/canvas/dxos-table";
+import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions } from "@/lib/media-size";
 import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -35,15 +37,15 @@ function TableContent({ ctx }: { ctx: CanvasNodeContext }) {
             update({ ...t, selectedRows: Array.isArray(t.selectedRows) ? t.selectedRows : [], mergedGroups: Array.isArray(t.mergedGroups) ? t.mergedGroups : [] }); setError("");
         } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     };
-    return <div className="flex h-full w-full min-w-0 flex-col p-3 text-xs" data-canvas-no-zoom style={{ background: theme.node.panel, color: theme.node.text }} onMouseDown={stop} onPointerDown={stop} onKeyDown={stop} onWheel={stop}>
+    return <div className="flex h-full w-full min-w-0 flex-col p-3 text-xs" style={{ background: theme.node.panel, color: theme.node.text }} onMouseDown={stopWorkflowControlDrag} onPointerDown={stop} onKeyDown={stop}>
         <div className="mb-2 flex flex-wrap items-center gap-1">
-            <strong className="mr-auto">{count} 行 · {channels.length} 个输入</strong>
+            <strong className="mr-auto cursor-grab" data-node-drag-handle>{count} 行 · {channels.length} 个输入</strong>
             <button className={button} onClick={() => ctx.updateMetadata({ tableInputChannels: [...channels, { id: `input-${nanoid()}` }] })}>＋输入</button>
             <button className={button} onClick={() => update({ ...table, columns: [...table.columns, `字段 ${table.columns.length + 2}`], rows: table.rows.map((r) => [...r, ""]) })}>＋字段</button>
             <button className={button} onClick={() => saveJson(table)}>导出</button>
             <label className={`${button} cursor-pointer`}>导入<input type="file" accept=".json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void importTable(f); e.target.value = ""; }} /></label>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div data-node-scroll className="min-h-0 flex-1 overflow-auto">
             <table className="w-full border-collapse"><thead><tr><th style={{ ...cell, minWidth: 40 }}>行</th>
                 {sources.map(({ channel, items }, index) => <th key={channel.id} style={cell}><div className="flex items-center justify-between">输入 {index + 1}<button title="移除输入及其连线" className={button} disabled={channels.length === 1} onClick={() => { ctx.applyOps([{ type: "delete_connections", ids: ctx.getConnections().filter((c) => c.toNodeId === node.id && (c.toPort || channels[0].id) === channel.id).map((c) => c.id) }]); ctx.updateMetadata({ tableInputChannels: channels.filter((c) => c.id !== channel.id) }); }}>×</button></div><select aria-label={`输入 ${index + 1} 配对方式`} style={input} value={channel.mode || "auto"} onChange={(e) => ctx.updateMetadata({ tableInputChannels: channels.map((c) => c.id === channel.id ? { ...c, mode: e.target.value === "auto" ? undefined : e.target.value as "sequence" | "shared" } : c) })}><option value="auto">自动（{items.length > 1 ? "逐行" : "共享"}）</option><option value="sequence">逐行配对</option><option value="shared">共享 / 重复末项</option></select></th>)}
                 {table.columns.map((name, col) => <th key={col} style={cell}><div className="flex"><input aria-label={`字段 ${col + 1} 名称`} style={input} value={name} onChange={(e) => update({ ...table, columns: table.columns.map((c, i) => i === col ? e.target.value : c) })} /><button className={button} title="删除字段" onClick={() => update({ ...table, columns: table.columns.filter((_, i) => i !== col), rows: table.rows.map((r) => r.filter((_, i) => i !== col)) })}>×</button></div></th>)}<th style={{ ...cell, minWidth: 35 }} /></tr></thead>
@@ -96,11 +98,11 @@ function ConcurrentContent({ ctx }: { ctx: CanvasNodeContext }) {
                     const prompt = [row.text, meta.prompt].filter(Boolean).join("\n"), references = row.media.map((m) => m.url);
                     let output: CanvasNodeMetadata;
                     if (mode === "image") {
-                        const result = await ai.generateImage(prompt, { model, references, count: 1, signal: abort.signal });
+                        const result = await ai.generateImage(prompt, { model, references, count: 1, size: meta.size, quality: meta.quality, signal: abort.signal });
                         if (!result.images.length) throw new Error("中转站未返回图片");
                         output = imageMetadata(await uploadImage(result.images[0], { signal: abort.signal }));
                     } else if (mode === "video") {
-                        const result = await ai.generateVideo(prompt, { model, references, signal: abort.signal });
+                        const result = await ai.generateVideo(prompt, { model, references, size: meta.size, seconds: meta.seconds, signal: abort.signal });
                         output = videoMetadata(await uploadMediaFile(result.url, "video"));
                     } else { output = { status: "success", content: (await ai.generateText(prompt, { model, references, signal: abort.signal })).text }; }
                     if (abort.signal.aborted) throw new DOMException("已停止", "AbortError");
@@ -116,10 +118,15 @@ function ConcurrentContent({ ctx }: { ctx: CanvasNodeContext }) {
             state.state = abort.signal.aborted ? "stopped" : "completed"; publish(); controller.current = null; runningTableBatches.delete(node.id); setRunning(false);
         }
     };
-    return <div className="flex h-full flex-col gap-3 p-4 text-xs" data-canvas-no-zoom style={{ background: theme.node.panel, color: theme.node.text }} onMouseDown={stop} onPointerDown={stop} onKeyDown={stop} onWheel={stop}>
-        <div className="flex items-center justify-between"><strong>生成输入 · {rows.length} 行</strong><select aria-label="生成类型" disabled={running} style={input} value={mode} onChange={(e) => ctx.updateMetadata({ generationMode: e.target.value as "image" | "video" | "text", model: undefined })}><option value="image">图像生成</option><option value="video">视频生成</option><option value="text">文本生成</option></select></div>
+    return <div className="flex h-full flex-col gap-3 p-4 text-xs" style={{ background: theme.node.panel, color: theme.node.text }} onMouseDown={stopWorkflowControlDrag} onPointerDown={stop} onKeyDown={stop}>
+        <div className="flex items-center justify-between"><strong className="cursor-grab" data-node-drag-handle>生成输入 · {rows.length} 行</strong><select aria-label="生成类型" disabled={running} style={input} value={mode} onChange={(e) => ctx.updateMetadata({ generationMode: e.target.value as "image" | "video" | "text", model: undefined })}><option value="image">图像生成</option><option value="video">视频生成</option><option value="text">文本生成</option></select></div>
         <select aria-label="模型与中转站" disabled={running} style={input} value={meta.model || ""} onChange={(e) => ctx.updateMetadata({ model: e.target.value || undefined })}><option value="">使用画布默认模型</option>{meta.model && !ctx.ai.listModels(mode).some((m) => m.value === meta.model) && <option value={meta.model}>缺失模型：{meta.model}</option>}{ctx.ai.listModels(mode).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select>
-        <div className="min-h-0 flex-1 space-y-2 overflow-auto">{!rows.length && <p style={{ color: theme.node.muted }}>将多维表格的右侧输出连接到这里。图片组和文本在表格中按行配对。</p>}{rows.map((row) => {
+        {mode !== "text" && <div className="grid grid-cols-2 gap-2">
+            <label>比例<select aria-label="生成比例" disabled={running} className="w-full" style={input} value={inferMediaRatio(meta.size || "auto")} onChange={(e) => ctx.updateMetadata({ size: computeMediaSize(inferMediaScale(meta.size || "auto"), e.target.value) })}>{mediaRatioOptions.map((r) => <option key={r.value} value={r.value}>{r.value}</option>)}</select></label>
+            {mode === "image" ? <label>分辨率<select aria-label="生成分辨率" disabled={running} className="w-full" style={input} value={inferMediaScale(meta.size || "auto")} onChange={(e) => ctx.updateMetadata({ size: computeMediaSize(e.target.value, inferMediaRatio(meta.size || "1:1") === "auto" ? "1:1" : inferMediaRatio(meta.size || "1:1")) })}>{mediaScaleOptions.map((r) => <option key={r} value={r}>{r.toUpperCase()}</option>)}</select></label> : <label>时长（秒）<input aria-label="视频时长" className="w-full" type="number" min={4} max={30} disabled={running} style={input} value={meta.seconds || "6"} onChange={(e) => ctx.updateMetadata({ seconds: e.target.value })} /></label>}
+            {mode === "image" && <label className="col-span-2">质量<select aria-label="生成质量" className="w-full" disabled={running} style={input} value={meta.quality || "auto"} onChange={(e) => ctx.updateMetadata({ quality: e.target.value })}>{["auto", "low", "medium", "high", "xhigh", "max"].map((q) => <option key={q} value={q}>{q}</option>)}</select></label>}
+        </div>}
+        <div data-node-scroll className="min-h-0 flex-1 space-y-2 overflow-auto">{!rows.length && <p data-node-no-drag className="select-text" style={{ color: theme.node.muted }}>将多维表格的右侧输出连接到这里。图片组和文本在表格中按行配对。</p>}{rows.map((row) => {
             const task = meta.tableBatchRun?.tasks.find((t) => t.rowNumber === row.rowNumber);
             return <label key={row.rowNumber} className="flex items-center gap-2 rounded-lg border p-2" style={{ borderColor: theme.node.stroke }}><input type="checkbox" disabled={running || !meta.tableBatchManualSelection} checked={meta.tableBatchManualSelection ? Boolean(meta.tableBatchSelectedRows?.includes(row.rowNumber)) : row.rowNumber >= (meta.tableBatchStartRow || 1)} onChange={(e) => ctx.updateMetadata({ tableBatchSelectedRows: e.target.checked ? [...(meta.tableBatchSelectedRows || []), row.rowNumber] : meta.tableBatchSelectedRows?.filter((i) => i !== row.rowNumber) })} /><b>{row.rowNumber}</b>{row.media.filter((m) => m.mediaType === "image").map((m) => <img key={m.nodeId} alt={m.title} src={m.url} className="size-12 rounded object-contain" />)}<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{row.text}</span>{task && <span title={task.error} style={{ color: theme.node.muted }}>{({ queued: "等待", running: running ? "运行中" : "已中断", success: "成功", error: "失败", stopped: "停止" })[task.status]}</span>}</label>;
         })}</div>

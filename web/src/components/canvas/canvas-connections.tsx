@@ -3,6 +3,8 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "@/types/canvas";
+import { connectionCurve, curvePath } from "@/lib/canvas/canvas-connection-geometry";
+import { tableConnectionPort } from "@/lib/canvas/canvas-table-port";
 
 export function ConnectionPath({
     connection,
@@ -20,15 +22,7 @@ export function ConnectionPath({
     onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const startX = from.position.x + from.width;
-    const startY = from.position.y + from.height / 2;
-    const endX = to.position.x;
-    const channels = to.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }];
-    const portIndex = Math.max(0, channels.findIndex((channel) => channel.id === connection.toPort));
-    const endY = to.position.y + to.height / 2 + (to.type === "dxos:table" ? (portIndex - (channels.length - 1) / 2) * 56 : 0);
-    const dx = Math.abs(endX - startX);
-    const curvature = Math.max(dx * 0.5, 50);
-    const pathD = `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+    const pathD = curvePath(connectionCurve(connection, from, to));
 
     return (
         <g>
@@ -74,7 +68,10 @@ export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { nod
     const snappedStartX = handle.handleType === "target" && target ? target.position.x + target.width : startX;
     const snappedStartY = handle.handleType === "target" && target ? target.position.y + target.height / 2 : startY;
     const snappedEndX = handle.handleType === "source" && target ? target.position.x : endX;
-    const snappedEndY = handle.handleType === "source" && target ? target.position.y + target.height / 2 : endY;
+    const targetChannels = target?.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }];
+    const targetPort = target ? tableConnectionPort(target, handle, mouseWorld, null) : undefined;
+    const targetOffset = target?.type === "dxos:table" ? (Math.max(0, targetChannels.findIndex((channel) => channel.id === targetPort)) - (targetChannels.length - 1) / 2) * 56 : 0;
+    const snappedEndY = handle.handleType === "source" && target ? target.position.y + target.height / 2 + targetOffset : endY;
     const distance = Math.abs(snappedEndX - snappedStartX);
     const pathD = `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX - distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
 

@@ -1,0 +1,9 @@
+{
+  "name": "BlinkFlow",
+  "short_name": "BlinkFlow",
+  "description": "BlinkFlow · 无限画布创作工具",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "icons": [{ "src": "/blinkflow.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any" }]
+}

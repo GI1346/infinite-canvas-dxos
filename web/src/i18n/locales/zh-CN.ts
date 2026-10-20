@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "无限画布",
-        description: "一个无限画布创作工具",
+        title: "BlinkFlow",
+        description: "BlinkFlow · 无限画布创作工具",
     },
     theme: { toggle: "切换主题" },
     common: {
@@ -254,7 +254,7 @@ export default {
         nodeTypes: { image: "图片", text: "文本", config: "生成配置", video: "视频", audio: "音频", group: "组" },
         toolbar: {
             select: "选择", pan: "移动", focus: "居中聚焦", text: "文本", image: "图片", video: "视频", audio: "音频", config: "生成配置", group: "组", extensions: "扩展节点", upload: "上传资产", appearance: "画布外观", clear: "清空画布",
-            themeMode: "主题模式", light: "浅色", dark: "深色", gridStyle: "网格样式", dots: "点", lines: "线", blank: "空白", imageInfo: "图片信息",
+            themeMode: "主题模式", light: "纯白", dark: "暖色", gridStyle: "网格样式", dots: "点", lines: "线", blank: "空白", imageInfo: "图片信息",
         },
         project: {
             untitled: "未命名画布", imported: "导入画布",
@@ -301,6 +301,8 @@ export default {
         agentOps: { add_node: "新增节点", update_node: "更新节点", delete_node: "删除节点", delete_connections: "删除连线", connect_nodes: "连接", set_viewport: "调整视图", select_nodes: "选择节点", run_generation: "触发生成" },
         pluginErrors: { invalidExport: "插件未导出有效对象", missingFields: "插件缺少 id 或 nodes", downloadFailed: "下载失败 (HTTP {{status}})", registryFailed: "获取官方插件列表失败 (HTTP {{status}})" },
         shortcut: {
+            rightClick: "右键单击",
+            createNode: "空白画布选择并添加节点",
             dragCanvas: "拖动画布",
             pan: "平移视图",
             toggleTool: "临时切换选择 / 移动",
@@ -341,8 +343,8 @@ export default {
         docs: "文档",
         switchLanguage: "切换到 {{language}}",
         shortcuts: "快捷键",
-        lightTheme: "切换到浅色主题",
-        darkTheme: "切换到深色主题",
+        lightTheme: "切换到纯白主题",
+        darkTheme: "切换到暖色主题",
     },
     home: {
         promptError: "获取提示词失败",

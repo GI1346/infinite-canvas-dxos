@@ -1,7 +1,7 @@
 {
   "name": "infinite-canvas-dxos",
-  "productName": "Infinite Canvas DXOS",
-  "version": "0.20.1",
+  "productName": "BlinkFlow",
+  "version": "0.20.3",
   "description": "无限画布、多维表格、并发生成和中转站自定义协议",
   "author": "GI1346",
   "private": true,
@@ -14,9 +14,9 @@
   "build": {
     "appId": "com.gi1346.infinitecanvasdxos",
     "directories": { "output": "release" },
-    "files": ["main.cjs", "web/**/*", "package.json"],
+    "files": ["main.cjs", "web/**/*", "assets/**/*", "package.json"],
     "extraResources": [{ "from": "../LICENSE", "to": "LICENSE.infinite-canvas" }],
-    "win": { "target": "nsis", "signAndEditExecutable": false, "artifactName": "Infinite-Canvas-DXOS-Setup-${version}-${arch}.${ext}" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false }
+    "win": { "target": "nsis", "signExecutable": false, "icon": "assets/blinkflow.ico", "artifactName": "BlinkFlow-Setup-${version}-${arch}.${ext}" },
+    "nsis": { "installerIcon": "assets/blinkflow.ico", "uninstallerIcon": "assets/blinkflow.ico", "installerHeaderIcon": "assets/blinkflow.ico", "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false }
   }
 }

@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import { readImageMeta } from "@/lib/image-utils";
 import type { ImageSplitParams } from "@/lib/canvas/canvas-image-data";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
+import { canvasThemes } from "@/lib/canvas-theme";
+import { useThemeStore } from "@/stores/use-theme-store";
 
 export type CanvasImageSplitParams = ImageSplitParams;
 
@@ -15,6 +17,7 @@ type ActiveLine = { axis: "horizontal" | "vertical"; index: number } | null;
 
 export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageSplitParams) => void }) {
     const { t } = useTranslation();
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [params, setParams] = useState(defaultParams);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [active, setActive] = useState<ActiveLine>(null);
@@ -30,7 +33,19 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
     const rows = horizontalLines.length + 1;
     const columns = verticalLines.length + 1;
     const total = rows * columns;
-    const pieceSize = image ? { width: Math.max(1, Math.floor(image.width / columns)), height: Math.max(1, Math.floor(image.height / rows)) } : null;
+    const xCuts = [0, ...verticalLines, 1], yCuts = [0, ...horizontalLines, 1];
+    const cells = Array.from({ length: total }, (_, index) => {
+        const row = Math.floor(index / columns), column = index % columns;
+        return { row, column, left: xCuts[column], top: yCuts[row], width: xCuts[column + 1] - xCuts[column], height: yCuts[row + 1] - yCuts[row],
+            pixels: image ? { width: Math.max(1, Math.round(xCuts[column + 1] * image.width) - Math.round(xCuts[column] * image.width)), height: Math.max(1, Math.round(yCuts[row + 1] * image.height) - Math.round(yCuts[row] * image.height)) } : null,
+            selected: !params.selectedCells || params.selectedCells.some((cell) => cell.row === row && cell.column === column) };
+    });
+    const selectedCells = cells.filter((cell) => cell.selected).map(({ row, column }) => ({ row, column }));
+    const selectCells = (selected: { row: number; column: number }[]) => {
+        pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
+        setParams({ ...params, selectedCells: selected });
+    };
+    const toggleCell = (cell: (typeof cells)[number]) => selectCells(cell.selected ? selectedCells.filter((item) => item.row !== cell.row || item.column !== cell.column) : [...selectedCells, { row: cell.row, column: cell.column }]);
 
     useEffect(() => {
         if (!open) return;
@@ -45,7 +60,9 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
 
     useEffect(() => {
         if (!open) return;
-        void readImageMeta(dataUrl).then(setImage);
+        let active = true;
+        void readImageMeta(dataUrl).then((size) => { if (active) setImage(size); });
+        return () => { active = false; };
     }, [dataUrl, open]);
 
     useEffect(() => {
@@ -57,7 +74,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         const count = clampGrid(value ?? params[key]);
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setActive(null);
-        setParams((current) => ({ ...current, [key]: count, [key === "rows" ? "horizontalLines" : "verticalLines"]: buildGridLines(count) }));
+        setParams((current) => ({ ...current, [key]: count, [key === "rows" ? "horizontalLines" : "verticalLines"]: buildGridLines(count), selectedCells: undefined }));
     };
     const addLine = (axis: "horizontal" | "vertical") => {
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
@@ -65,7 +82,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         const spot = findLineSpot(params[key] || []);
         const lines = [...(params[key] || []), spot].sort((a, b) => a - b);
         setActive({ axis, index: lines.indexOf(spot) });
-        setParams({ ...params, [key]: lines, rows: axis === "horizontal" ? lines.length + 1 : params.rows, columns: axis === "vertical" ? lines.length + 1 : params.columns });
+        setParams({ ...params, [key]: lines, rows: axis === "horizontal" ? lines.length + 1 : params.rows, columns: axis === "vertical" ? lines.length + 1 : params.columns, selectedCells: undefined });
     };
     const deleteLine = () => {
         if (!active) return;
@@ -73,11 +90,12 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         setParams((current) => {
             const key = active.axis === "horizontal" ? "horizontalLines" : "verticalLines";
             const lines = (current[key] || []).filter((_, index) => index !== active.index);
-            return { ...current, [key]: lines, rows: active.axis === "horizontal" ? lines.length + 1 : current.rows, columns: active.axis === "vertical" ? lines.length + 1 : current.columns };
+            return { ...current, [key]: lines, rows: active.axis === "horizontal" ? lines.length + 1 : current.rows, columns: active.axis === "vertical" ? lines.length + 1 : current.columns, selectedCells: undefined };
         });
         setActive(null);
     };
     const startDrag = (axis: "horizontal" | "vertical", index: number, event: ReactPointerEvent) => {
+        if (event.button !== 0 || viewport.spacePressed) return;
         event.preventDefault();
         event.stopPropagation();
         setActive({ axis, index });
@@ -145,14 +163,14 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         window.addEventListener("keydown", handleKeyDown, true);
         return () => window.removeEventListener("keydown", handleKeyDown, true);
     }, [active, open, params, redoSplit, undoSplit]);
-    const confirmParams = { ...params, horizontalLines, verticalLines, rows, columns };
+    const confirmParams = { ...params, horizontalLines, verticalLines, rows, columns, selectedCells };
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden transitionName="" maskTransitionName="">
-            <div className="space-y-5" data-canvas-no-zoom>
+        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={900} centered destroyOnHidden transitionName="" maskTransitionName="">
+            <div className="space-y-5" data-canvas-no-zoom data-canvas-overlay>
                 <div>
-                    <h2 className="text-xl font-semibold">{t("canvas.editors.splitTitle")}</h2>
-                    <p className="mt-1 text-sm opacity-60">{t("canvas.editors.splitDescription", { count: total })}</p>
+                    <h2 className="text-xl font-semibold">多宫格裁剪</h2>
+                    <p className="mt-1 text-sm opacity-60">本地切分为独立图片节点，原图保持不变；默认输出全部，可选择一个或多个切片。此功能不是节点排列或图片拼接。</p>
                     <p className="mt-2 text-xs leading-5 opacity-55">{t("canvas.editors.splitHint")}</p>
                 </div>
                 <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_280px]">
@@ -160,13 +178,15 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
                         <div
                             ref={viewport.viewportRef}
                             {...viewport.panHandlers}
+                            data-grid-viewport
                             className={`relative isolate h-[340px] min-h-[300px] rounded-lg bg-black/5 ${viewport.scrollClassName} ${viewport.isPanning ? "cursor-grabbing" : viewport.spacePressed ? "cursor-grab" : ""}`}
                         >
                             <div className="relative" style={viewport.contentStyle}>
-                                <div ref={previewRef} className="absolute isolate overflow-hidden rounded-lg bg-black [backface-visibility:hidden] [contain:layout_paint] [transform:translateZ(0)]" style={viewport.stageStyle}>
+                                <div ref={previewRef} data-grid-stage className="absolute isolate overflow-hidden rounded-lg [backface-visibility:hidden] [contain:layout_paint] [transform:translateZ(0)]" style={{ ...viewport.stageStyle, background: theme.node.panel }}>
                                     <div className="absolute left-0 top-0 [backface-visibility:hidden]" style={viewport.mediaStyle}>
                                         <img src={dataUrl} alt="" className="block h-full w-full object-contain" draggable={false} />
                                     </div>
+                                    {cells.map((cell) => <button key={`${cell.row}:${cell.column}`} type="button" data-grid-cell={`${cell.row}:${cell.column}`} aria-label={`输出第 ${cell.row + 1} 行第 ${cell.column + 1} 列切片`} aria-pressed={cell.selected} className="absolute flex cursor-pointer items-start justify-start p-1 text-left text-xs" style={{ left: `${cell.left * 100}%`, top: `${cell.top * 100}%`, width: `${cell.width * 100}%`, height: `${cell.height * 100}%`, background: cell.selected ? "transparent" : theme.canvas.selectionFill, opacity: cell.selected ? 1 : 0.45 }} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleCell(cell)}><span className="rounded px-1 py-0.5" style={{ background: theme.node.panel, color: theme.node.text }}>{cell.row + 1}-{cell.column + 1}{cell.selected ? " ✓" : ""}<br />{cell.pixels ? `${cell.pixels.width} × ${cell.pixels.height} px` : "…"}</span></button>)}
                                     <SplitGrid horizontalLines={horizontalLines} verticalLines={verticalLines} active={active} onPointerDown={startDrag} />
                                 </div>
                             </div>
@@ -209,18 +229,20 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
                                 {t("canvas.editors.resetLines")}
                             </Button>
                         </div>
+                        <div className="flex items-center justify-between"><span className="text-sm">输出 {selectedCells.length} / {total} 张</span><div><Button type="text" size="small" onClick={() => selectCells(cells.map(({ row, column }) => ({ row, column })))}>全选</Button><Button type="text" size="small" onClick={() => selectCells([])}>全不选</Button></div></div>
+                        <div className="grid max-h-40 grid-cols-3 gap-1 overflow-auto" aria-label="选择宫格输出切片">{cells.map((cell) => <button key={`${cell.row}:${cell.column}`} type="button" aria-label={`选择第 ${cell.row + 1} 行第 ${cell.column + 1} 列切片`} aria-pressed={cell.selected} className="rounded border px-1 py-1 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.text, background: cell.selected ? theme.toolbar.activeBg : "transparent" }} onClick={() => toggleCell(cell)}>{cell.row + 1}-{cell.column + 1}{cell.selected ? " ✓" : ""}<br />{cell.pixels ? `${cell.pixels.width} × ${cell.pixels.height}` : "…"}</button>)}</div>
                         <div className="rounded-xl border px-4 py-3 text-sm">
                             <div className="flex items-center justify-between">
                                 <span className="opacity-60">{t("canvas.editors.pieceCount")}</span>
-                                <span className="font-semibold">{t("canvas.editors.pieces", { count: total })}</span>
+                                <span className="font-semibold">{t("canvas.editors.pieces", { count: selectedCells.length })}</span>
                             </div>
                             <div className="mt-2 flex items-center justify-between">
-                                <span className="opacity-60">{t("canvas.editors.averageSize")}</span>
-                                <span className="font-semibold">{pieceSize ? `${pieceSize.width} x ${pieceSize.height}` : t("canvas.editors.unknown")}</span>
+                                <span className="opacity-60">切片实际尺寸</span>
+                                <span className="text-xs opacity-70">见图中各片标注</span>
                             </div>
                         </div>
-                        <Button type="primary" size="large" className="w-full" icon={<Grid2x2 className="size-4" />} onClick={() => onConfirm(confirmParams)}>
-                            {t("canvas.editors.generateChildren")}
+                        <Button type="primary" size="large" className="w-full" icon={<Grid2x2 className="size-4" />} disabled={!image || !selectedCells.length} onClick={() => onConfirm(confirmParams)}>
+                            生成 {selectedCells.length} 个图片子节点
                         </Button>
                     </div>
                 </div>
@@ -233,7 +255,7 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
     return (
         <label className="block space-y-2">
             <span className="font-medium opacity-75">{label}</span>
-            <InputNumber className="w-full" min={1} max={maxGridSize} precision={0} value={value} onChange={onChange} />
+            <InputNumber aria-label={`宫格${label}`} className="w-full" min={1} max={maxGridSize} precision={0} value={value} onChange={onChange} />
         </label>
     );
 }
@@ -242,12 +264,12 @@ function SplitGrid({ horizontalLines, verticalLines, active, onPointerDown }: { 
     return (
         <div className="pointer-events-none absolute inset-0">
             {verticalLines.map((line, index) => (
-                <div key={`column-${index}`} className="pointer-events-auto absolute inset-y-0 -ml-2 w-4 cursor-ew-resize" style={{ left: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("vertical", index, event)}>
+                <div key={`column-${index}`} data-grid-line={`vertical:${index}`} role="separator" aria-label={`竖切线 ${index + 1}`} className="pointer-events-auto absolute inset-y-0 -ml-2 w-4 cursor-ew-resize" style={{ left: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("vertical", index, event)}>
                     <div className={`absolute left-1/2 top-0 h-full border-l shadow-[0_0_0_1px_rgba(0,0,0,.35)] ${active?.axis === "vertical" && active.index === index ? "border-amber-300" : "border-white/90"}`} />
                 </div>
             ))}
             {horizontalLines.map((line, index) => (
-                <div key={`row-${index}`} className="pointer-events-auto absolute inset-x-0 -mt-2 h-4 cursor-ns-resize" style={{ top: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("horizontal", index, event)}>
+                <div key={`row-${index}`} data-grid-line={`horizontal:${index}`} role="separator" aria-label={`横切线 ${index + 1}`} className="pointer-events-auto absolute inset-x-0 -mt-2 h-4 cursor-ns-resize" style={{ top: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("horizontal", index, event)}>
                     <div className={`absolute left-0 top-1/2 w-full border-t shadow-[0_0_0_1px_rgba(0,0,0,.35)] ${active?.axis === "horizontal" && active.index === index ? "border-amber-300" : "border-white/90"}`} />
                 </div>
             ))}
@@ -287,6 +309,7 @@ function cloneSplitParams(params: CanvasImageSplitParams) {
         ...params,
         horizontalLines: [...(params.horizontalLines || [])],
         verticalLines: [...(params.verticalLines || [])],
+        ...(params.selectedCells ? { selectedCells: params.selectedCells.map((cell) => ({ ...cell })) } : {}),
     };
 }
 

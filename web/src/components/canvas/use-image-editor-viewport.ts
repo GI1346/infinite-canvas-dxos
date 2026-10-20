@@ -36,12 +36,13 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             setSpacePressed(false);
         };
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.code !== "Space" || event.repeat) return;
+            if (event.code !== "Space") return;
             const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest("input,textarea,[contenteditable='true']")) return;
+            if (!spacePressedRef.current && target?.closest("input,textarea,[contenteditable]:not([contenteditable='false'])")) return;
             event.preventDefault();
             event.stopPropagation();
             event.stopImmediatePropagation();
+            if (spacePressedRef.current) return;
             if (document.activeElement instanceof HTMLElement && document.activeElement.matches("button,a,[role='button']")) document.activeElement.blur();
             spacePressedRef.current = true;
             setSpacePressed(true);

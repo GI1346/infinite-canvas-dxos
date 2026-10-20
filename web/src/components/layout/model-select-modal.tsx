@@ -3,14 +3,15 @@ import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { fetchChannelModels } from "@/services/api/image";
-import type { ModelChannel } from "@/stores/use-config-store";
+import { fetchChannelModelDetails } from "@/services/api/image";
+import type { ModelChannel, ChannelModel } from "@/stores/use-config-store";
 
 // Channel model selector: fetch upstream models or add them manually, then include checked models in the channel list.
-export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onClose }: { open: boolean; channel: ModelChannel | null; selectedNames: string[]; onConfirm: (names: string[]) => void; onClose: () => void }) {
+export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onClose }: { open: boolean; channel: ModelChannel | null; selectedNames: string[]; onConfirm: (names: string[], details: ChannelModel[]) => void; onClose: () => void }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const [existing, setExisting] = useState<string[]>([]);
+    const [details, setDetails] = useState<ChannelModel[]>([]);
     const [fetched, setFetched] = useState<string[]>([]);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [activeTab, setActiveTab] = useState("new");
@@ -22,11 +23,12 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
         if (!open) return;
         setExisting(selectedNames);
         setFetched([]);
+        setDetails([]);
         setSelected(new Set(selectedNames));
         setActiveTab(selectedNames.length ? "existing" : "new");
         setSearch("");
         setManual("");
-    }, [open, selectedNames]);
+    }, [open]);
 
     const currentList = activeTab === "new" ? fetched : existing;
     const visibleList = useMemo(() => {
@@ -67,8 +69,9 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
         }
         setLoading(true);
         try {
-            const models = await fetchChannelModels(channel);
-            setFetched(models);
+            const models = await fetchChannelModelDetails(channel);
+            setDetails(models);
+            setFetched(models.map((m) => m.name));
             setActiveTab("new");
             message.success(t("config.modelSelect.fetched", { count: models.length }));
         } catch (error) {
@@ -80,7 +83,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
 
     const confirm = () => {
         const ordered = [...existing, ...fetched].filter((name, index, list) => list.indexOf(name) === index).filter((name) => selected.has(name));
-        onConfirm(ordered);
+        onConfirm(ordered, details);
         onClose();
     };
 

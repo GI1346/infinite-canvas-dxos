@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { useCallProtocolStore } from "@/stores/use-call-protocol-store";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -22,6 +23,8 @@ export type ModelChannel = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    protocolId?: string;
+    imageTaskBaseUrl?: string;
     models: ChannelModel[];
 };
 
@@ -76,35 +79,36 @@ export type ChannelCredentialsImportResult = {
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
+export const RELAY_IMAGE_NAME = "65535 绘画（独立密钥）";
+export const RELAY_IMAGE_URL = "https://sub-proxy-us.65535.space";
+export const RELAY_TEXT_URL = "https://api2-cn.65535.space";
+export const RELAY_TASK_URL = "https://task-api-1-cn.65535.space";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: OPENAI_BASE_URL,
+    baseUrl: RELAY_IMAGE_URL,
     apiKey: "",
     apiFormat: "openai",
     channels: [
         {
             id: "default",
-            name: i18n.t("config.channels.defaultName"),
-            baseUrl: OPENAI_BASE_URL,
+            name: RELAY_IMAGE_NAME,
+            baseUrl: RELAY_IMAGE_URL,
             apiKey: "",
             apiFormat: "openai",
-            models: [
-                { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
-            ],
+            imageTaskBaseUrl: RELAY_TASK_URL,
+            models: [],
         },
+        { id: "relay-text", name: "65535 对话（独立密钥）", baseUrl: RELAY_TEXT_URL, apiKey: "", apiFormat: "openai", models: [] },
     ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
-    textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    model: "",
+    imageModel: "",
+    videoModel: "",
+    textModel: "",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -116,7 +120,7 @@ export const defaultConfig: AiConfig = {
     videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: [],
     quality: "auto",
     size: "1:1",
     background: "",
@@ -157,7 +161,7 @@ export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
 }
 const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
-const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
+const IMAGE_KEYWORDS = ["banana", "sunburst", "seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
 
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
 export function guessCapability(name: string): ModelCapability {
@@ -205,8 +209,15 @@ export function selectableModelsByCapability(config: AiConfig, capability?: Mode
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
 export function resolveModelScript(config: AiConfig, value: string) {
-    const model = findChannelModel(config, value)?.model;
-    return model?.protocolId ? `canvas-protocol:${model.protocolId}` : model?.script?.trim() || "";
+    const match = findChannelModel(config, value);
+    if (!match) throw new Error("所选模型或渠道不存在，请重新选择");
+    const { model, channel } = match;
+    const protocolId = model.protocolId || (!model.script?.trim() ? channel.protocolId : undefined);
+    if (!protocolId) return model.script?.trim() || "";
+    const protocol = useCallProtocolStore.getState().protocols.find((item) => item.id === protocolId);
+    if (!protocol && useCallProtocolStore.persist.hasHydrated()) throw new Error(`自定义协议 ${protocolId} 已删除或尚未导入，请到协议中心重新绑定`);
+    if (protocol && protocol.capability !== model.capability) throw new Error(`协议“${protocol.label}”与所选模型能力不匹配，请为该模型绑定正确协议`);
+    return `canvas-protocol:${protocolId}`;
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -322,6 +333,8 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        ...(channel?.protocolId?.trim() ? { protocolId: channel.protocolId.trim() } : {}),
+        ...(channel?.imageTaskBaseUrl !== undefined ? { imageTaskBaseUrl: channel.imageTaskBaseUrl.trim() } : {}),
     };
 }
 
@@ -434,7 +447,9 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: i18n.t("config.channels.defaultName"), baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
+    if (!matched || !matched.models.some((item) => item.name === model)) throw new Error("所选模型或渠道不存在，请重新选择；不会改用其他渠道的密钥");
+    if (!matched.apiKey.trim()) throw new Error(`请填写“${matched.name}”的独立 API Key；不会使用其他渠道的密钥`);
+    return matched;
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -469,6 +484,16 @@ function normalizeChannels(config: AiConfig) {
                 models: normalizeChannelModels([config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel].map(modelOptionName)),
             }),
         );
+    }
+    // Add relay presets without copying keys between providers or replacing existing configurations.
+    for (const preset of defaultConfig.channels) {
+        const existing = channels.find((c) => normalizedBaseUrlKey(c.baseUrl) === normalizedBaseUrlKey(preset.baseUrl));
+        if (existing) {
+            // Update only the old built-in labels; keep user names, credentials and bindings.
+            if (preset.baseUrl === RELAY_IMAGE_URL && ["", "默认渠道", "Default channel", "65535 生图（独立密钥）"].includes(existing.name)) existing.name = RELAY_IMAGE_NAME;
+            if (preset.imageTaskBaseUrl && existing.imageTaskBaseUrl === undefined && !existing.protocolId) existing.imageTaskBaseUrl = preset.imageTaskBaseUrl;
+        }
+        else channels.push(createModelChannel({ ...preset, id: preset.id === "default" ? "relay-image" : preset.id }));
     }
     return channels;
 }

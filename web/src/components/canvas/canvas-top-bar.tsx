@@ -27,6 +27,8 @@ export function CanvasTopBar({
     onImportImage,
     onOpenPlugins,
     onOpenCleanup,
+    onOpenGrid,
+    onOpenTasks,
     onUndo,
     onRedo,
     agentOpen,
@@ -50,6 +52,8 @@ export function CanvasTopBar({
     onImportImage: () => void;
     onOpenPlugins: () => void;
     onOpenCleanup: () => void;
+    onOpenGrid: () => void;
+    onOpenTasks: () => void;
     onUndo: () => void;
     onRedo: () => void;
     agentOpen: boolean;
@@ -141,6 +145,8 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
+                    <Button type="text" onClick={onOpenGrid}>宫格布局</Button>
+                    <Button type="text" onClick={onOpenTasks}>异步任务</Button>
                     <Button type="text" icon={<Eraser className="size-4" />} onClick={onOpenCleanup}>清理</Button>
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
@@ -157,7 +163,8 @@ export function CanvasTopBar({
             </div>
             <Modal title={t("canvas.shortcuts")} open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
                 <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
-                    <Shortcut keys={["Ctrl / Space", t("canvas.shortcut.drag")]} value={t("canvas.shortcut.toggleTool")} />
+                    <Shortcut keys={["Space", t("canvas.shortcut.drag")]} value="平移画布（悬停节点也可用）" />
+                    <Shortcut keys={[t("canvas.shortcut.rightClick")]} value={t("canvas.shortcut.createNode")} />
                     <Shortcut keys={[t("canvas.shortcut.wheel")]} value={t("canvas.shortcut.zoom")} />
                     <Shortcut keys={[t("canvas.shortcut.zoomSlider")]} value={t("canvas.shortcut.preciseZoom")} />
                     <Shortcut keys={[t("canvas.shortcut.drag")]} value={t("canvas.shortcut.boxSelect")} />

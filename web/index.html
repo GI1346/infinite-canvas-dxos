@@ -3,15 +3,17 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="description" content="一个无限画布创作工具" />
-        <link rel="icon" href="/logo.svg" />
-        <title>无限画布</title>
+        <meta name="description" content="BlinkFlow · 无限画布创作工具" />
+        <link rel="icon" type="image/png" href="/blinkflow.png" />
+        <link rel="apple-touch-icon" href="/blinkflow.png" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <title>BlinkFlow</title>
         <script>
             try {
                 var s = JSON.parse(localStorage.getItem("infinite-canvas:theme_store") || "{}");
                 var t = s.state && s.state.theme === "light" ? "light" : "dark";
-                document.documentElement.classList.toggle("dark", t === "dark");
-                document.documentElement.style.colorScheme = t;
+                document.documentElement.classList.toggle("warm", t === "dark");
+                document.documentElement.style.colorScheme = "light";
             } catch (e) {}
         </script>
     </head>

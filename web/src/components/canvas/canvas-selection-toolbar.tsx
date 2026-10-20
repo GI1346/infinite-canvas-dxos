@@ -18,6 +18,7 @@ export function CanvasSelectionToolbar({
     canUngroup,
     onGroup,
     onUngroup,
+    onGrid,
 }: {
     nodes: CanvasNodeData[];
     viewport: ViewportTransform;
@@ -26,6 +27,7 @@ export function CanvasSelectionToolbar({
     canUngroup: boolean;
     onGroup: () => void;
     onUngroup: () => void;
+    onGrid: () => void;
 }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -36,7 +38,7 @@ export function CanvasSelectionToolbar({
     const top = viewport.y + bounds.top * viewport.k - SELECTION_PAD;
     const width = (bounds.right - bounds.left) * viewport.k + SELECTION_PAD * 2;
     const height = (bounds.bottom - bounds.top) * viewport.k + SELECTION_PAD * 2;
-    const showActions = showToolbar && (canGroup || canUngroup);
+    const showActions = showToolbar;
 
     return (
         <>
@@ -63,6 +65,7 @@ export function CanvasSelectionToolbar({
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                 >
+                    <SelectionAction title="宫格布局" label="宫格布局" icon={<Group className="size-4" />} onClick={onGrid} />
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
                     {canUngroup ? <SelectionAction title={t("canvas.nodeToolbar.ungroupTitle")} label={t("canvas.nodeToolbar.ungroup")} icon={<Ungroup className="size-4" />} onClick={onUngroup} /> : null}
                 </div>

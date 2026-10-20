@@ -99,6 +99,8 @@ function VideoSettingsPortal({
         <div
             ref={panelRef}
             className="canvas-image-settings-popover"
+            data-canvas-overlay
+            data-canvas-no-zoom
             style={style}
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}

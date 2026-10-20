@@ -3,6 +3,7 @@ export type ImageCropRect = {
     y: number;
     width: number;
     height: number;
+    background?: string;
 };
 
 export type ImageAngleTransform = {
@@ -26,18 +27,29 @@ export type ImageSplitParams = {
     columns: number;
     horizontalLines?: number[];
     verticalLines?: number[];
+    selectedCells?: { row: number; column: number }[];
 };
 
 export type ImageSplitPiece = {
     row: number;
     column: number;
     dataUrl: string;
+    width: number;
+    height: number;
 };
 
 export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
     const image = await loadImage(dataUrl);
     if (crop) {
-        return drawCrop(image, Math.floor(crop.x * image.width), Math.floor(crop.y * image.height), Math.ceil(crop.width * image.width), Math.ceil(crop.height * image.height));
+        if (![crop.x, crop.y, crop.width, crop.height].every(Number.isFinite) || crop.width <= 0 || crop.height <= 0) throw new Error("裁剪扩图区域无效");
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(crop.width * image.width));
+        canvas.height = Math.max(1, Math.round(crop.height * image.height));
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("无法创建裁剪扩图画布");
+        if (crop.background && crop.background !== "transparent") { context.fillStyle = crop.background; context.fillRect(0, 0, canvas.width, canvas.height); }
+        context.drawImage(image, -Math.round(crop.x * image.width), -Math.round(crop.y * image.height), image.width, image.height);
+        return exportPng(canvas, "裁剪扩图");
     }
     const size = Math.min(image.width, image.height);
     const sx = Math.max(0, Math.floor((image.width - size) / 2));
@@ -50,14 +62,16 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
     const xCuts = buildSplitCuts(params.verticalLines, image.width, Math.max(1, Math.floor(params.columns)));
     const yCuts = buildSplitCuts(params.horizontalLines, image.height, Math.max(1, Math.floor(params.rows)));
     const pieces: ImageSplitPiece[] = [];
+    const selected = params.selectedCells ? new Set(params.selectedCells.map(({ row, column }) => `${row}:${column}`)) : null;
 
     for (let row = 0; row < yCuts.length - 1; row += 1) {
         const sy = yCuts[row];
         const sh = yCuts[row + 1] - sy;
         for (let column = 0; column < xCuts.length - 1; column += 1) {
+            if (selected && !selected.has(`${row}:${column}`)) continue;
             const sx = xCuts[column];
             const sw = xCuts[column + 1] - sx;
-            pieces.push({ row, column, dataUrl: drawCrop(image, sx, sy, sw, sh) });
+            pieces.push({ row, column, dataUrl: drawCrop(image, sx, sy, sw, sh), width: Math.max(1, sw), height: Math.max(1, sh) });
         }
     }
 
@@ -65,8 +79,8 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
 }
 
 function buildSplitCuts(lines: number[] | undefined, size: number, count: number) {
-    if (!lines?.length) return Array.from({ length: count + 1 }, (_, index) => Math.floor((index * size) / count));
-    return [0, ...lines.map((line) => Math.round(line * size)).filter((line) => line > 0 && line < size).sort((a, b) => a - b), size];
+    const positions = lines === undefined ? Array.from({ length: count - 1 }, (_, index) => (index + 1) / count) : lines;
+    return [0, ...new Set(positions.filter(Number.isFinite).map((line) => Math.round(line * size)).filter((line) => line > 0 && line < size).sort((a, b) => a - b)), size];
 }
 
 export async function transformAngleDataUrl(dataUrl: string, params: ImageAngleTransform) {
@@ -127,9 +141,9 @@ function drawCrop(image: HTMLImageElement, sx: number, sy: number, sw: number, s
     canvas.width = Math.max(1, sw);
     canvas.height = Math.max(1, sh);
     const context = canvas.getContext("2d");
-    if (!context) return image.src;
+    if (!context) throw new Error("无法创建图片切片画布");
     context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/png");
+    return exportPng(canvas, "图片切片");
 }
 
 function drawStepUpscale(image: HTMLImageElement, width: number, height: number) {
@@ -165,10 +179,17 @@ function drawResizeCanvas(source: CanvasImageSource, sourceWidth: number, source
     return canvas;
 }
 
+function exportPng(canvas: HTMLCanvasElement, operation: string) {
+    const result = canvas.toDataURL("image/png");
+    if (!result.startsWith("data:image/")) throw new Error(`${operation}尺寸过大，浏览器无法导出，请缩小选区`);
+    return result;
+}
+
 function loadImage(dataUrl: string) {
-    return new Promise<HTMLImageElement>((resolve) => {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
         const image = new Image();
-        image.onload = () => resolve(image);
+        image.onload = () => image.width > 0 && image.height > 0 ? resolve(image) : reject(new Error("图片尺寸无效，请重新载入后再试"));
+        image.onerror = () => reject(new Error("无法读取图片，请重新载入后再试"));
         image.src = dataUrl;
     });
 }

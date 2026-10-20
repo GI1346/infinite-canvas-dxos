@@ -4,7 +4,7 @@ export const TABLE_TYPE = "dxos:table";
 export const CONCURRENT_TYPE = "dxos:concurrent";
 export const runningTableBatches = new Set<string>();
 export type DxTable = { kind: "table"; version: 1; columns: string[]; rows: string[][]; selectedRows: number[]; mergedGroups: number[][] };
-export type DxInputChannel = { id: string; mode?: "sequence" | "shared" };
+export type DxInputChannel = { id: string; mode?: "sequence" | "shared"; imagesOnly?: boolean; mediaNodeIds?: string[] };
 export type DxInputItem = { type: "media"; nodeId: string; url: string; storageKey?: string; mediaType: string; title: string } | { type: "text"; text: string };
 export type DxRow = { rowNumber: number; media: Extract<DxInputItem, { type: "media" }>[]; text: string };
 export type DxBatchRun = { id: string; state: "running" | "completed" | "stopped"; tasks: { rowNumber: number; status: "queued" | "running" | "success" | "error" | "stopped"; outputIds: string[]; error?: string }[] };
@@ -34,7 +34,8 @@ export function channelItems(node: CanvasNodeData, channelId: string, nodes: Can
         }
     };
     for (const edge of connections.filter((e) => e.toNodeId === node.id && (e.toPort || "input-1") === channelId)) { const source = nodes.find((n) => n.id === edge.fromNodeId); if (source) visit(source); }
-    return result;
+    const channel = node.metadata?.tableInputChannels?.find((input) => input.id === channelId);
+    return channel?.imagesOnly ? result.filter((item) => item.type === "media" && item.mediaType === "image" && (!channel.mediaNodeIds || channel.mediaNodeIds.includes(item.nodeId))) : result;
 }
 export function itemAt(items: DxInputItem[], channel: DxInputChannel, row: number) {
     if (!items.length) return null;
@@ -42,7 +43,7 @@ export function itemAt(items: DxInputItem[], channel: DxInputChannel, row: numbe
 }
 export function tableRows(table: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]): DxRow[] {
     const data = readTable(table), channels = channelsFor(table).map((channel) => ({ channel, items: channelItems(table, channel.id, nodes, connections) }));
-    const count = Math.max(data.rows.length, ...channels.map((c) => c.items.length));
+    const count = table.metadata?.tableRowsFromData ? data.rows.length : Math.max(data.rows.length, ...channels.map((c) => c.items.length));
     return Array.from({ length: count }, (_, index) => {
         const media: DxRow["media"] = [], texts: string[] = [];
         channels.forEach(({ channel, items }) => {

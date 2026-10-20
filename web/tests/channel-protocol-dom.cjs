@@ -1,0 +1,12 @@
+require("./interaction-dom.cjs");
+window.matchMedia = () => ({ matches: false, media: "", onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
+globalThis.ShadowRoot = window.ShadowRoot;
+globalThis.SVGElement = window.SVGElement;
+globalThis.HTMLBodyElement = window.HTMLBodyElement;
+globalThis.HTMLHtmlElement = window.HTMLHtmlElement;
+globalThis.HTMLAnchorElement = window.HTMLAnchorElement;
+globalThis.FileReader = window.FileReader;
+globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+const computed = globalThis.getComputedStyle;
+globalThis.getComputedStyle = (element) => computed(element);
+window.getComputedStyle = globalThis.getComputedStyle;

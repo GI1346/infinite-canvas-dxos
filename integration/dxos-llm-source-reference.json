@@ -1,0 +1,25 @@
+{
+  "source": "DXOS-Portable-0.5.4-win-x64/data/developer-apps/.versions/canvas/1.0.296+10296-43c7498c/source/assets/index-BGZnP3Qr.js",
+  "sourceSha256": "96622ebbbb6b61e4d4778fdd9042ba9fb69dca563272ffb17ae69d4be8f5e293",
+  "formattedReference": "web/.checks/dxos-canvas.reference.js",
+  "formattedReferenceSha256": "6b6a199a4d74cb15ad5d474996e91f617bae26bd06d5102c89f1a2855ea263b9",
+  "canvasVersion": "1.0.296",
+  "observedFunctions": [
+    { "name": "zM", "line": 19478, "semantics": "解析 kind=table/version=1/columns/rows；接受 JSON fenced 响应" },
+    { "name": "rF", "line": 19536, "semantics": "通过选定 providerId/model 做文本生成，区分 text/list，传入 inputNodeIds 与取消信号" },
+    { "name": "dF", "line": 19621, "semantics": "text 创建文本节点；list 创建可编辑多维表格，来源图片按组保留独立通道并连接 LLM flow" }
+  ],
+  "hostAdaptation": [
+    "沿用宿主 ctx.ai.generateText、canvas-call/v1、独立渠道与密钥，不导入 DX 账户或协议格式",
+    "列表仅做一次显式请求，严格校验字符串列和行；不静默启动 DX 原有规划或修复额外请求",
+    "不沿用 DX 的列数、行数或单元格截断限制",
+    "按输入来源保留图片组与单图的角色层级，输出通道钉住实际图片 ID，排除源组文本和重复媒体",
+    "取消、删除或卸载后忽略晚到结果；停止后新一轮与旧请求隔离"
+  ],
+  "verification": {
+    "command": "node tests/run-llm-node.cjs",
+    "cases": 16,
+    "transport": "仅模拟传输响应与凭据，实际渲染节点、usePluginHost、API、已保存协议执行器；无真实 Key 或计费",
+    "result": "通过"
+  }
+}

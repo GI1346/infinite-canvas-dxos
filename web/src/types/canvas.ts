@@ -45,7 +45,11 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    llmOutputMode?: "text" | "list";
+    llmChannelId?: string;
+    llmOutputNodeId?: string;
     table?: import("@/lib/canvas/dxos-table").DxTable;
+    tableRowsFromData?: boolean;
     tableInputChannels?: import("@/lib/canvas/dxos-table").DxInputChannel[];
     tableBatchConcurrency?: number;
     tableBatchStartRow?: number;

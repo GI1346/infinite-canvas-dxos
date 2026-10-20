@@ -29,10 +29,10 @@ const neutral = {
 };
 
 export function getAntThemeConfig(dark: boolean): ThemeConfig {
-    const color = dark ? neutral.dark : neutral.light;
+    const color = { ...neutral.light, ...(dark ? { elevatedBg: "#fbfaf7" } : {}) };
 
     return {
-        algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+        algorithm: antdTheme.defaultAlgorithm,
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
             colorPrimary: color.primary,
@@ -42,6 +42,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorLinkActive: color.primary,
             colorTextLightSolid: color.primaryText,
             colorBgElevated: color.elevatedBg,
+            colorBgLayout: dark ? "#f4f2ed" : "#ffffff",
             controlItemBgHover: color.itemHoverBg,
             controlItemBgActive: color.itemSelectedBg,
             controlItemBgActiveHover: color.itemSelectedHoverBg,

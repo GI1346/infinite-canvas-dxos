@@ -318,45 +318,55 @@ export const CanvasNode = React.memo(function CanvasNode({
                 if (!referenceSelectionState) onSelectCapture?.(event, data.id);
             }}
             onContextMenu={(event) => {
+                const target = event.target instanceof Element ? event.target : null;
+                if (target?.closest("input,textarea,select,[contenteditable]:not([contenteditable='false'])")) {
+                    event.stopPropagation();
+                    return;
+                }
                 if (referenceSelectionState) event.preventDefault();
                 else onContextMenu(event, data.id);
             }}
         >
-            {!referenceSelectionState && (isSelected || hovered || isEditingTitle) && (
-                <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    {isEditingTitle ? (
-                        <input
-                            ref={titleInputRef}
-                            value={titleDraft}
-                            maxLength={64}
-                            className="h-6 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
-                            style={{ borderColor: theme.node.muted, color: theme.node.text }}
-                            onChange={(event) => setTitleDraft(event.target.value)}
-                            onBlur={finishTitleEditing}
-                            onKeyDown={(event) => {
-                                if (event.key === "Enter") finishTitleEditing();
-                                if (event.key === "Escape") {
-                                    setTitleDraft(data.title || "");
-                                    setIsEditingTitle(false);
-                                }
-                            }}
-                        />
-                    ) : (
-                        <button
-                            type="button"
-                            className="block max-w-full truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-75 transition hover:border-current hover:opacity-100"
-                            style={{ color: theme.node.text }}
-                            title={t("canvas.node.renameHint")}
-                            onDoubleClick={(event) => {
-                                event.stopPropagation();
-                                setIsEditingTitle(true);
-                            }}
-                        >
-                            {data.title || t("canvas.node.untitled")}
-                        </button>
-                    )}
-                </div>
-            )}
+            <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => {
+                if (referenceSelectionState) {
+                    event.stopPropagation();
+                    if (event.button === 0 && referenceSelectionState === "available") onSelectReference?.(data.id);
+                } else if (isEditingTitle) event.stopPropagation();
+                else onMouseDown(event, data.id);
+            }} onPointerDown={(event) => event.stopPropagation()}>
+                {isEditingTitle && !referenceSelectionState ? (
+                    <input
+                        ref={titleInputRef}
+                        value={titleDraft}
+                        aria-label="节点名称"
+                        maxLength={64}
+                        className="h-6 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
+                        style={{ borderColor: theme.node.muted, color: theme.node.text }}
+                        onChange={(event) => setTitleDraft(event.target.value)}
+                        onBlur={finishTitleEditing}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter") finishTitleEditing();
+                            if (event.key === "Escape") {
+                                setTitleDraft(data.title || "");
+                                setIsEditingTitle(false);
+                            }
+                        }}
+                    />
+                ) : (
+                    <button
+                        type="button"
+                        className="block max-w-full truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-75 transition hover:border-current hover:opacity-100"
+                        style={{ color: theme.node.text }}
+                        title={t("canvas.node.renameHint")}
+                        onDoubleClick={(event) => {
+                            event.stopPropagation();
+                            if (!referenceSelectionState) setIsEditingTitle(true);
+                        }}
+                    >
+                        {data.title || t("canvas.node.untitled")}
+                    </button>
+                )}
+            </div>
 
             <div
                 className="relative h-full w-full overflow-visible rounded-3xl border-2"
@@ -443,7 +453,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 {!referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
             </div>
 
-            {!referenceSelectionState && data.type === "dxos:table" ? (data.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }]).map((channel, index, all) => <div key={channel.id} className="absolute -left-6 z-40 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center" style={{ top: `calc(50% + ${(index - (all.length - 1) / 2) * 56}px)` }} data-table-port={channel.id} title={`输入 ${index + 1}：拖动连线到此处`} onMouseDown={(event) => onConnectStart(event, data.id, "target", channel.id)}><span className="grid size-5 place-items-center rounded-full border text-[10px]" style={{ background: theme.node.panel, color: theme.node.text, borderColor: theme.node.muted }}>{index + 1}</span></div>) : null}
+            {!referenceSelectionState && data.type === "dxos:table" ? (data.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }]).map((channel, index, all) => <div key={channel.id} className="absolute -left-6 z-40 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center" style={{ top: `calc(50% + ${(index - (all.length - 1) / 2) * 56}px)` }} data-node-handle data-table-port={channel.id} title={`输入 ${index + 1}：拖动连线到此处`} onMouseDown={(event) => onConnectStart(event, data.id, "target", channel.id)}><span className="grid size-5 place-items-center rounded-full border text-[10px]" style={{ background: theme.node.panel, color: theme.node.text, borderColor: theme.node.muted }}>{index + 1}</span></div>) : null}
             {!referenceSelectionState && !isGroup && data.type !== "dxos:table" ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? <ConnectionHandleDot side="right" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
@@ -989,6 +999,7 @@ function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "r
 
     return (
         <div
+            data-node-handle
             className={`absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
                 side === "left" ? "-left-6" : "-right-6"
             } ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}

@@ -3,8 +3,9 @@ import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, RELAY_TASK_URL, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { useCallProtocolStore } from "@/stores/use-call-protocol-store";
+import { relayTaskBase } from "@/services/api/relay-tasks";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -16,10 +17,6 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
-    const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
-        { label: "OpenAI", value: "openai" },
-        { label: "Gemini", value: "gemini" },
-    ];
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
     useEffect(() => {
@@ -28,17 +25,32 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     if (!draft) return null;
 
+    const protocolOptions = [
+        { label: "OpenAI", value: "openai" },
+        { label: "Gemini", value: "gemini" },
+        { label: "65535 原生异步任务", value: "relay-native" },
+        ...(draft.protocolId && !protocols.some((protocol) => protocol.id === draft.protocolId) ? [{ label: `缺失：${draft.protocolId}`, value: `protocol:${draft.protocolId}` }] : []),
+        ...protocols.map((protocol) => ({ label: `${protocol.label}（${t(`config.channelEditor.capabilities.${protocol.capability}`)}）`, value: `protocol:${protocol.id}` })),
+    ];
+    const selectedProtocol = draft.protocolId ? `protocol:${draft.protocolId}` : relayTaskBase(draft) ? "relay-native" : draft.apiFormat;
+
     const patch = (value: Partial<ModelChannel>) => setDraft((current) => (current ? { ...current, ...value } : current));
     const setModels = (models: ChannelModel[]) => patch({ models });
 
-    const changeApiFormat = (apiFormat: ApiCallFormat) => {
+    const changeProtocol = (value: string) => {
+        if (value.startsWith("protocol:")) { patch({ protocolId: value.slice("protocol:".length), apiFormat: "openai", imageTaskBaseUrl: "" }); return; }
+        if (value === "relay-native") { patch({ protocolId: undefined, apiFormat: "openai", imageTaskBaseUrl: draft.imageTaskBaseUrl || RELAY_TASK_URL }); return; }
+        const apiFormat = value as ApiCallFormat;
         const baseUrl = !draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat) ? defaultBaseUrlForApiFormat(apiFormat) : draft.baseUrl;
-        patch({ apiFormat, baseUrl });
+        patch({ apiFormat, baseUrl, protocolId: undefined, imageTaskBaseUrl: "" });
     };
 
-    const applySelection = (names: string[]) => {
+    const applySelection = (names: string[], fetchedModels: ChannelModel[] = []) => {
         const map = new Map(draft.models.map((model) => [model.name, model]));
-        setModels(names.map((name) => map.get(name) || { name, capability: guessCapability(name) }));
+        setModels(names.map((name) => {
+            const existing = map.get(name), fetched = fetchedModels.find((model) => model.name === name);
+            return existing ? { ...existing, ...(!existing.script && !existing.protocolId && fetched?.script ? { script: fetched.script } : {}) } : fetched || { name, capability: guessCapability(name) };
+        }));
     };
 
     const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability, protocolId: undefined } : model)));
@@ -73,7 +85,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 </label>
                 <label className="block">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.protocol")}</span>
-                    <Select className="w-full" value={draft.apiFormat} options={apiFormatOptions} onChange={changeApiFormat} />
+                    <Select aria-label="渠道调用协议" className="w-full" value={selectedProtocol} options={protocolOptions} onChange={changeProtocol} />
                 </label>
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
@@ -85,6 +97,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 </label>
             </div>
 
+            <p className="mt-3 text-xs opacity-60">渠道协议是模型默认调用方式；模型单独绑定的协议或脚本优先。自定义协议仅用于同能力模型，其他能力请单独绑定。</p>
+            {selectedProtocol === "relay-native" && <label className="mt-4 block"><span className="mb-1 block text-sm font-medium">原生异步生图任务地址（使用当前生图渠道的独立密钥）</span><Input aria-label="原生异步任务地址" value={draft.imageTaskBaseUrl || ""} placeholder={RELAY_TASK_URL} onChange={(event) => patch({ imageTaskBaseUrl: event.target.value })} /></label>}
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                     <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
@@ -104,7 +118,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                             </span>
                             <div className="flex shrink-0 items-center gap-2">
                                 <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Select size="small" style={{ width: 170 }} placeholder="默认 / 调用脚本" allowClear value={model.protocolId} options={[...(model.protocolId && !protocols.some((p) => p.id === model.protocolId) ? [{ value: model.protocolId, label: `缺失：${model.protocolId}` }] : []), ...protocols.filter((p) => p.capability === model.capability).map((p) => ({ value: p.id, label: p.label }))]} onChange={(protocolId) => setModels(draft.models.map((m) => m.name === model.name ? { ...m, protocolId } : m))} />
+                                <Select aria-label={`${model.name} 模型协议`} size="small" style={{ width: 170 }} placeholder={model.script ? "使用模型调用脚本" : "继承渠道协议"} allowClear value={model.protocolId} options={[...(model.protocolId && !protocols.some((p) => p.id === model.protocolId) ? [{ value: model.protocolId, label: `缺失：${model.protocolId}` }] : []), ...protocols.filter((p) => p.capability === model.capability).map((p) => ({ value: p.id, label: p.label }))]} onChange={(protocolId) => setModels(draft.models.map((m) => m.name === model.name ? { ...m, protocolId } : m))} />
                                 <Button size="small" disabled={Boolean(model.protocolId)} type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
                                     {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
                                 </Button>

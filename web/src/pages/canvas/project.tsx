@@ -23,10 +23,15 @@ import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
+import { ConnectionCutEffects, useConnectionCutter } from "@/components/canvas/use-connection-cutter";
+import { tableConnectionPort } from "@/lib/canvas/canvas-table-port";
+import { connectionCutHistory } from "@/lib/canvas/canvas-connection-cut-history";
+import { connectionCurve } from "@/lib/canvas/canvas-connection-geometry";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
+import { CanvasNodePaintDialog } from "@/components/canvas/canvas-node-paint-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
@@ -74,6 +79,10 @@ import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
+import { arrangeGrid } from "@/lib/canvas/canvas-grid-layout";
+import { canvasDownloadMimeType, canvasDownloadName } from "@/lib/canvas/canvas-download-name";
+import { CanvasRelayTasksModal } from "@/components/canvas/canvas-relay-tasks-modal";
+import { InputNumber } from "antd";
 import { CanvasCleanupModal } from "@/components/canvas/canvas-cleanup-modal";
 import { runningTableBatches } from "@/lib/canvas/dxos-table";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
@@ -232,7 +241,7 @@ function InfiniteCanvasPage() {
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
-    const [canvasTool, setCanvasTool] = useState<"select" | "pan">("pan");
+    const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
@@ -256,7 +265,12 @@ function InfiniteCanvasPage() {
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+    const [tasksOpen, setTasksOpen] = useState(false);
+    const [gridOpen, setGridOpen] = useState(false);
+    const [gridColumns, setGridColumns] = useState(2);
+    const [gridGap, setGridGap] = useState(48);
     const [cleanupOpen, setCleanupOpen] = useState(false);
+    const [paintNodeId, setPaintNodeId] = useState<string | null>(null);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
     const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
     const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
@@ -299,6 +313,19 @@ function InfiniteCanvasPage() {
         }),
         [activeChatId, backgroundMode, chatSessions, showImageInfo],
     );
+
+    const commitConnectionCut = useCallback((ids: Set<string>) => {
+        const result = connectionCutHistory(createHistoryEntry(), lastHistoryRef.current, historyRef.current.past, ids);
+        if (!result) return;
+        if (historyCommitTimerRef.current) { clearTimeout(historyCommitTimerRef.current); historyCommitTimerRef.current = null; }
+        historyRef.current = { past: result.past, future: result.future };
+        lastHistoryRef.current = result.current;
+        connectionsRef.current = result.current.connections;
+        setConnections(result.current.connections);
+        setSelectedConnectionId((selected) => selected && ids.has(selected) ? null : selected);
+        setHistoryState({ canUndo: true, canRedo: false }); setContextMenu(null);
+    }, [createHistoryEntry]);
+    const connectionCutter = useConnectionCutter({ containerRef, nodes, connections, viewport, onCommit: commitConnectionCut });
 
     const cleanupCanvasFiles = useCallback(
         (extra?: unknown) => {
@@ -611,9 +638,8 @@ function InfiniteCanvasPage() {
 
     const hideNodeToolbar = useCallback(() => {}, []);
 
-    const lastConnectionPointer = useRef({ x: 0, y: 0 });
     const connectNodes = useCallback(
-        (current: ConnectionHandle, targetNodeId: string) => {
+        (current: ConnectionHandle, targetNodeId: string, clientX: number, clientY: number) => {
             if (current.nodeId === targetNodeId) return;
 
             const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
@@ -623,14 +649,14 @@ function InfiniteCanvasPage() {
             }
             const { fromNodeId, toNodeId } = connection;
             const target = nodesRef.current.find((node) => node.id === toNodeId);
-            const toPort = target?.type === "dxos:table" ? (current.handleType === "target" ? current.portId : document.elementFromPoint(lastConnectionPointer.current.x, lastConnectionPointer.current.y)?.closest<HTMLElement>("[data-table-port]")?.dataset.tablePort || (() => { const channels = target.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }]; const y = screenToCanvas(lastConnectionPointer.current.x, lastConnectionPointer.current.y).y; const i = Math.max(0, Math.min(channels.length - 1, Math.round((y - target.position.y - target.height / 2) / 56 + (channels.length - 1) / 2))); return channels[i].id; })()) || target.metadata?.tableInputChannels?.[0]?.id || "input-1" : undefined;
+            const toPort = target ? tableConnectionPort(target, current, screenToCanvas(clientX, clientY), document.elementFromPoint(clientX, clientY)) : undefined;
             const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId && conn.toPort === toPort);
             if (!exists) {
                 setConnections((prev) => [...prev, { id: nanoid(), fromNodeId, toNodeId, ...(toPort ? { toPort } : {}) }]);
             }
             setContextMenu(null);
         },
-        [message, t],
+        [message, screenToCanvas, t],
     );
 
     const createConnectedNode = useCallback(
@@ -717,20 +743,16 @@ function InfiniteCanvasPage() {
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
-    // Connections are culled like nodes; a cubic curve stays inside its control-point hull, so endpoint bounds widened by the curvature is a safe test.
+    // A cubic stays inside its control-point hull, including every table input port.
     const visibleConnections = useMemo(
         () =>
             connections.flatMap((connection) => {
                 const from = nodeById.get(connection.fromNodeId);
                 const to = nodeById.get(connection.toNodeId);
                 if (!from || !to) return [];
-                const startX = from.position.x + from.width;
-                const startY = from.position.y + from.height / 2;
-                const endX = to.position.x;
-                const endY = to.position.y + to.height / 2;
-                const curvature = Math.max(Math.abs(endX - startX) * 0.5, 50);
+                const curve = connectionCurve(connection, from, to), xs = curve.map((point) => point.x), ys = curve.map((point) => point.y);
                 const inView =
-                    Math.max(startX + curvature, endX) > viewBounds.left && Math.min(startX, endX - curvature) < viewBounds.right && Math.max(startY, endY) > viewBounds.top && Math.min(startY, endY) < viewBounds.bottom;
+                    Math.max(...xs) >= viewBounds.left && Math.min(...xs) <= viewBounds.right && Math.max(...ys) >= viewBounds.top && Math.min(...ys) <= viewBounds.bottom;
                 return inView ? [{ connection, from, to }] : [];
             }),
         [connections, nodeById, viewBounds],
@@ -740,6 +762,7 @@ function InfiniteCanvasPage() {
     const singleSelectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
     const toolbarNode = (toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null) || (singleSelectedNodeId ? nodeById.get(singleSelectedNodeId) || null : null);
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
+    const paintNode = paintNodeId ? nodeById.get(paintNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
     const maskEditNode = maskEditNodeId ? nodeById.get(maskEditNodeId) || null : null;
     const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
@@ -891,6 +914,7 @@ function InfiniteCanvasPage() {
             setToolbarNodeId((current) => (current && allIds.has(current) ? null : current));
             setDialogNodeId((current) => (current && allIds.has(current) ? null : current));
             setInfoNodeId((current) => (current && allIds.has(current) ? null : current));
+            setPaintNodeId((current) => (current && allIds.has(current) ? null : current));
             setCropNodeId((current) => (current && allIds.has(current) ? null : current));
             setMaskEditNodeId((current) => (current && allIds.has(current) ? null : current));
             setAngleNodeId((current) => (current && allIds.has(current) ? null : current));
@@ -991,6 +1015,7 @@ function InfiniteCanvasPage() {
         setNodes([]);
         setConnections([]);
         setInfoNodeId(null);
+        setPaintNodeId(null);
         setCropNodeId(null);
         setMaskEditNodeId(null);
         setAngleNodeId(null);
@@ -1286,6 +1311,7 @@ function InfiniteCanvasPage() {
     );
 
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
+        if (event.button !== 0) return;
         event.stopPropagation();
         // Capture already selected the node; this only starts dragging, with a fallback selection if capture did not run.
         const currentNodes = nodesRef.current;
@@ -1458,7 +1484,7 @@ function InfiniteCanvasPage() {
             if (currentConnection) {
                 const dropTarget = getConnectionDropTarget(event.clientX, event.clientY, currentConnection);
                 if (dropTarget.nodeId) {
-                    connectNodes(currentConnection, dropTarget.nodeId);
+                    connectNodes(currentConnection, dropTarget.nodeId, event.clientX, event.clientY);
                     setConnecting(null);
                 } else if (dropTarget.isNearNode) {
                     setConnecting(null);
@@ -1668,6 +1694,7 @@ function InfiniteCanvasPage() {
                 setToolbarNodeId(null);
                 setDialogNodeId(null);
                 setInfoNodeId(null);
+                setPaintNodeId(null);
                 setCropNodeId(null);
                 setMaskEditNodeId(null);
                 setPendingConnectionCreate(null);
@@ -1809,15 +1836,17 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
 
-    const downloadNodeImage = useCallback((node: CanvasNodeData) => {
+    const downloadNodeImage = useCallback(async (node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
+        const mimeType = await canvasDownloadMimeType(node.metadata.content, node.metadata.mimeType);
+        saveAs(node.metadata.content, canvasDownloadName(node.title || node.type, node.metadata.content, mimeType, node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(mimeType) : "png"));
     }, []);
 
-    const downloadBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
+    const downloadBatchImage = useCallback(async (node: CanvasNodeData, imageId: string) => {
         const image = node.metadata?.images?.find((item) => item.id === imageId);
         if (!image?.content) return;
-        saveAs(image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.content)}`);
+        const mimeType = await canvasDownloadMimeType(image.content, image.mimeType);
+        saveAs(image.content, canvasDownloadName(node.title || "image", image.content, mimeType, "png", (node.metadata?.images?.findIndex((item) => item.id === imageId) ?? 0) + 1));
     }, []);
 
     const captureVideoNodeFrame = useCallback(
@@ -1939,6 +1968,20 @@ function InfiniteCanvasPage() {
         [effectiveConfig.model, effectiveConfig.textModel, message, t],
     );
 
+    const paintImageNode = useCallback(async (node: CanvasNodeData, dataUrl: string) => {
+        const image = await uploadImage(dataUrl);
+        const child: CanvasNodeData = {
+            id: nanoid(), type: CanvasNodeType.Image, title: (node.title || "图片") + "-画笔",
+            position: { x: node.position.x + node.width + 96, y: node.position.y },
+            ...fitNodeSize(image.width, image.height, node.width, Math.max(node.width, node.height)),
+            metadata: { ...imageMetadata(image), prompt: node.metadata?.prompt },
+        };
+        setNodes((previous) => [...previous, child]);
+        setConnections((previous) => [...previous, { id: nanoid(), fromNodeId: node.id, toNodeId: child.id }]);
+        setSelectedNodeIds(new Set([child.id])); setSelectedConnectionId(null); setDialogNodeId(null); setPaintNodeId(null);
+        message.success("画笔图片已加入画布，原图已保留");
+    }, [message]);
+
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
         if (!node.metadata?.content) return;
         const cropped = await cropDataUrl(node.metadata.content, crop);
@@ -1948,7 +1991,7 @@ function InfiniteCanvasPage() {
         const child: CanvasNodeData = {
             id: childId,
             type: CanvasNodeType.Image,
-            title: "Cropped Image",
+            title: `${node.title || "图片"}-${crop.x < 0 || crop.y < 0 || crop.x + crop.width > 1 || crop.y + crop.height > 1 ? "裁剪扩图" : "裁剪"}`,
             position: { x: node.position.x + node.width + 96, y: node.position.y },
             width,
             height: width * (image.height / image.width),
@@ -1967,11 +2010,14 @@ function InfiniteCanvasPage() {
     const splitImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
             if (!node.metadata?.content) return;
-            setSplitNodeId(null);
             const pieces = await splitDataUrl(node.metadata.content, params);
             const gap = 16;
-            const cellWidth = node.width / params.columns;
-            const cellHeight = node.height / params.rows;
+            const columns = Array.from({ length: params.columns }, (_, column) => pieces.find((piece) => piece.column === column)?.width || 0);
+            const rows = Array.from({ length: params.rows }, (_, row) => pieces.find((piece) => piece.row === row)?.height || 0);
+            const source = await readImageMeta(node.metadata.content);
+            const scale = node.width / source.width;
+            const columnLeft = (column: number) => columns.slice(0, column).reduce((sum, width) => sum + (width ? width * scale + gap : 0), 0);
+            const rowTop = (row: number) => rows.slice(0, row).reduce((sum, height) => sum + (height ? height * scale + gap : 0), 0);
             const startX = node.position.x + node.width + 96;
             const startY = node.position.y;
             const childNodes = await Promise.all(
@@ -1982,9 +2028,9 @@ function InfiniteCanvasPage() {
                         id,
                         type: CanvasNodeType.Image,
                         title: t("canvas.projectPage.splitTitle", { name: node.title || t("assets.kinds.image"), row: piece.row + 1, column: piece.column + 1 }),
-                        position: { x: startX + piece.column * (cellWidth + gap), y: startY + piece.row * (cellHeight + gap) },
-                        width: cellWidth,
-                        height: cellHeight,
+                        position: { x: startX + columnLeft(piece.column), y: startY + rowTop(piece.row) },
+                        width: piece.width * scale,
+                        height: piece.height * scale,
                         metadata: {
                             ...imageMetadata(image),
                             prompt: node.metadata?.prompt,
@@ -1992,6 +2038,7 @@ function InfiniteCanvasPage() {
                     } satisfies CanvasNodeData;
                 }),
             );
+            setSplitNodeId(null);
             setNodes((prev) => [...prev, ...childNodes]);
             setConnections((prev) => [...prev, ...childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
             setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
@@ -2327,12 +2374,6 @@ function InfiniteCanvasPage() {
         if (nextTitle) renameProject(projectId, nextTitle);
         setTitleEditing(false);
     }, [projectId, renameProject, titleDraft]);
-
-    const preventCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
-        if ((event.target as HTMLElement).closest("[data-node-id]")) return;
-        event.preventDefault();
-        setContextMenu(null);
-    }, []);
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -3165,9 +3206,9 @@ function InfiniteCanvasPage() {
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
-        <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
+        <main className="flex h-full min-h-0 overflow-clip" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} />
-            <section className="relative min-w-0 flex-1 overflow-hidden">
+            <section className="relative min-w-0 flex-1 overflow-clip">
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
                     titleDraft={titleDraft}
@@ -3186,6 +3227,8 @@ function InfiniteCanvasPage() {
                     onImportImage={() => handleUploadRequest()}
                     onOpenPlugins={() => setPluginManagerOpen(true)}
                     onOpenCleanup={() => setCleanupOpen(true)}
+                    onOpenGrid={() => setGridOpen(true)}
+                    onOpenTasks={() => setTasksOpen(true)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     agentOpen={agentPanelOpen}
@@ -3198,7 +3241,17 @@ function InfiniteCanvasPage() {
                     viewport={viewport}
                     tool={canvasTool}
                     backgroundMode={backgroundMode}
+                    onConnectionCutStart={(event) => {
+                        if (referencePickerNodeId || connectingParams) return false;
+                        if (focusAnimRef.current) cancelAnimationFrame(focusAnimRef.current);
+                        focusAnimRef.current = null;
+                        return connectionCutter.start(event);
+                    }}
+                    isCuttingConnections={connectionCutter.cutting}
                     onViewportChange={(next) => {
+                        if (focusAnimRef.current) cancelAnimationFrame(focusAnimRef.current);
+                        focusAnimRef.current = null;
+                        viewportRef.current = next;
                         setViewport(next);
                         setContextMenu(null);
                     }}
@@ -3206,16 +3259,15 @@ function InfiniteCanvasPage() {
                         if (!referencePickerNodeId) handleCanvasMouseDown(event);
                     }}
                     onCanvasDeselect={referencePickerNodeId ? undefined : deselectCanvas}
-                    onCanvasDoubleClick={(event) => {
+                    onCanvasContextMenu={(event) => {
                         if (referencePickerNodeId) return;
                         setContextMenu(null);
                         setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
                     }}
-                    onContextMenu={preventCanvasContextMenu}
                     onDrop={handleDrop}
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
-                        {visibleConnections.map(({ connection, from, to }) => (
+                        {visibleConnections.filter(({ connection }) => !connectionCutter.pendingIds.has(connection.id)).map(({ connection, from, to }) => (
                             <ConnectionPath
                                 key={connection.id}
                                 connection={connection}
@@ -3235,6 +3287,7 @@ function InfiniteCanvasPage() {
                             />
                         ))}
                         {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
+                        <ConnectionCutEffects trail={connectionCutter.trail} severed={connectionCutter.severed} scale={viewport.k} />
                     </svg>
 
                     {visibleNodes.map((node) => (
@@ -3345,6 +3398,7 @@ function InfiniteCanvasPage() {
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onPaint={(node) => setPaintNodeId(node.id)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
@@ -3368,6 +3422,7 @@ function InfiniteCanvasPage() {
                         canUngroup={canUngroupSelection}
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
+                        onGrid={() => setGridOpen(true)}
                     />
                 ) : null}
 
@@ -3433,6 +3488,14 @@ function InfiniteCanvasPage() {
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
+                <Modal title="宫格布局" open={gridOpen} onCancel={() => setGridOpen(false)} okText="排列选中节点" okButtonProps={{ disabled: selectedNodeIds.size < 2 }} onOk={() => { setNodes((current) => arrangeGrid(current, selectedNodeIds, gridColumns, gridGap)); setGridOpen(false); }}>
+                    <p className="mb-4">先框选两个或以上节点；保留图片比例、分组内容和全部连线。</p><div className="flex gap-4"><label>列数 <InputNumber min={1} value={gridColumns} onChange={(v) => setGridColumns(v || 1)} /></label><label>间距 <InputNumber min={0} value={gridGap} onChange={(v) => setGridGap(v ?? 0)} /></label></div>
+                </Modal>
+                <CanvasRelayTasksModal open={tasksOpen} onClose={() => setTasksOpen(false)} onImages={async (urls, title) => {
+                    const images = await Promise.all(urls.map((url) => uploadImage(url)));
+                    const p = { x: -viewportRef.current.x / viewportRef.current.k + 80, y: -viewportRef.current.y / viewportRef.current.k + 100 };
+                    setNodes((prev) => [...prev, ...images.map((image, i) => ({ id: nanoid(), type: CanvasNodeType.Image, title: title + (images.length > 1 ? `-${i + 1}` : ""), position: { x: p.x + i * 330, y: p.y }, ...fitNodeSize(image.width, image.height, 300, 300), metadata: imageMetadata(image) }))]);
+                }} />
                 <CanvasCleanupModal open={cleanupOpen} projectId={projectId} onClose={() => setCleanupOpen(false)} beforeOperation={() => {
                     const busy = nodesRef.current.some((n) => n.metadata?.status === "loading") || runningTableBatches.size > 0;
                     const agent = useAgentStore.getState();
@@ -3444,13 +3507,15 @@ function InfiniteCanvasPage() {
                     return () => { historyPausedRef.current = false; };
                 }} />
 
-                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
+                {paintNode?.metadata?.content ? <CanvasNodePaintDialog dataUrl={paintNode.metadata.content} open onClose={() => setPaintNodeId(null)} onConfirm={(dataUrl) => paintImageNode(paintNode, dataUrl)} /> : null}
+
+                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => cropImageNode(cropNode!, crop).catch((error) => { message.error(error instanceof Error ? error.message : "裁剪扩图失败"); })} /> : null}
 
                 {maskEditNode?.metadata?.content ? (
                     <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
                 ) : null}
 
-                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => splitImageNode(splitNode!, params).catch((error) => { message.error(error instanceof Error ? error.message : "多宫格裁剪失败"); })} /> : null}
 
                 {upscaleNode?.metadata?.content ? (
                     <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />

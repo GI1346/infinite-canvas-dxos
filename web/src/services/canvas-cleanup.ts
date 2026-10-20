@@ -5,7 +5,7 @@ import { useCanvasStore, flushCanvasStorage, type CanvasProject } from "@/stores
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const imageStores = ["image_files", "image_previews"];
-const logStores = ["image_generation_logs", "video_generation_logs"];
+const logStores = ["image_generation_logs", "video_generation_logs", "relay_tasks"];
 const allowedStores = [...imageStores, ...logStores];
 const canvasKey = "infinite-canvas:canvas_store", assetKey = "infinite-canvas:asset_store";
 type RecordEntry = { store: string; key: string; value: unknown };
@@ -29,7 +29,7 @@ async function recordsIn(names: string[]) {
     return records;
 }
 
-export async function prepareCleanup(projectId: string, options: CleanupOptions): Promise<CleanupPlan> {
+export async function prepareCleanup(projectId: string, options: CleanupOptions, createBackup = true): Promise<CleanupPlan> {
     if (!options.images && !options.history && !options.logs) throw new Error("请至少选择一项清理内容");
     if (!useCanvasStore.getState().hydrated || !useAssetStore.getState().hydrated) throw new Error("本地数据尚未加载完成");
     await flushCanvasStorage();
@@ -45,13 +45,13 @@ export async function prepareCleanup(projectId: string, options: CleanupOptions)
     const retained = imageKeys({ projects: nextProjects, assets: nextAssets, logs: options.logs ? [] : logs });
     const records = options.images ? (await recordsIn(imageStores)).filter((r) => !retained.has(r.key)) : [];
     if (options.logs) records.push(...logs);
-    const backup = await encodeBackup({ format: "canvas-cleanup/v1", createdAt: new Date().toISOString(), projects: affected, assets: options.images && options.assets ? assets.filter((a) => a.kind === "image") : [], records });
+    const backup = createBackup ? await encodeBackup({ format: "canvas-cleanup/v1", createdAt: new Date().toISOString(), projects: affected, assets: options.images && options.assets ? assets.filter((a) => a.kind === "image") : [], records }) : new Blob();
     return {
         backup,
         imageCount: records.filter((r) => r.store === "image_files").length,
         recordCount: options.logs ? logs.length : 0,
         apply: async () => {
-            if (useCanvasStore.getState().projects !== projects || useAssetStore.getState().assets !== assets) throw new Error("备份后画布或素材发生了变化，请取消并重新备份清理");
+            if (useCanvasStore.getState().projects !== projects || useAssetStore.getState().assets !== assets) throw new Error("清理准备后画布或素材发生了变化，请重新执行清理");
             const writes: RecordEntry[] = [{ store: "app_state", key: canvasKey, value: JSON.stringify({ state: { projects: nextProjects, deletedProjects }, version: 0 }) }];
             if (options.images && options.assets) writes.push({ store: "app_state", key: assetKey, value: JSON.stringify({ state: { assets: nextAssets }, version: 0 }) });
             await commitRecords(writes, records);

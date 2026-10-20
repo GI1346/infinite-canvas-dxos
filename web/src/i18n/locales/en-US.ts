@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "Infinite Canvas",
-        description: "An infinite canvas creation tool",
+        title: "BlinkFlow",
+        description: "BlinkFlow · An infinite canvas creation tool",
     },
     theme: { toggle: "Toggle theme" },
     common: {
@@ -254,7 +254,7 @@ export default {
         nodeTypes: { image: "Image", text: "Text", config: "Generation config", video: "Video", audio: "Audio", group: "Group" },
         toolbar: {
             select: "Select", pan: "Move", focus: "Center focus", text: "Text", image: "Image", video: "Video", audio: "Audio", config: "Generation config", group: "Group", extensions: "Extension nodes", upload: "Upload assets", appearance: "Canvas appearance", clear: "Clear canvas",
-            themeMode: "Theme", light: "Light", dark: "Dark", gridStyle: "Grid style", dots: "Dots", lines: "Lines", blank: "Blank", imageInfo: "Image info",
+            themeMode: "Theme", light: "White", dark: "Warm", gridStyle: "Grid style", dots: "Dots", lines: "Lines", blank: "Blank", imageInfo: "Image info",
         },
         project: {
             untitled: "Untitled canvas", imported: "Imported canvas",
@@ -301,6 +301,8 @@ export default {
         agentOps: { add_node: "Add node", update_node: "Update node", delete_node: "Delete node", delete_connections: "Delete connections", connect_nodes: "Connect", set_viewport: "Adjust view", select_nodes: "Select nodes", run_generation: "Run generation" },
         pluginErrors: { invalidExport: "The plugin did not export a valid object", missingFields: "The plugin is missing id or nodes", downloadFailed: "Download failed (HTTP {{status}})", registryFailed: "Failed to load the official plugin registry (HTTP {{status}})" },
         shortcut: {
+            rightClick: "Right-click",
+            createNode: "Choose and add a node on blank canvas",
             dragCanvas: "Drag canvas",
             pan: "Pan view",
             toggleTool: "Temporarily switch Select / Move",
@@ -341,8 +343,8 @@ export default {
         docs: "Documentation",
         switchLanguage: "Switch to {{language}}",
         shortcuts: "Keyboard shortcuts",
-        lightTheme: "Switch to light theme",
-        darkTheme: "Switch to dark theme",
+        lightTheme: "Switch to white theme",
+        darkTheme: "Switch to warm theme",
     },
     home: {
         promptError: "Failed to load prompts",
