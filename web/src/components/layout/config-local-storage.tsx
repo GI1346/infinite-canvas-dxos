@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { readLocalStorageUsage, type LocalStorageUsage } from "@/services/local-storage-usage";
+import type { DesktopStorageInfo } from "@/services/desktop-storage";
 
 const storeLabelKeys: Record<string, string> = {
     app_state: "appState",
@@ -22,6 +23,23 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
     const [usage, setUsage] = useState<LocalStorageUsage | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [desktop, setDesktop] = useState<DesktopStorageInfo | null>(null);
+    const [storageError, setStorageError] = useState("");
+    const [clearing, setClearing] = useState(false);
+
+    useEffect(() => {
+        if (active && window.blinkflowStorage) {
+            void window.blinkflowStorage.info().then(setDesktop).catch((reason) => setStorageError(String(reason)));
+        }
+    }, [active]);
+
+    const clearStorage = async () => {
+        setClearing(true);
+        setStorageError("");
+        try { await window.blinkflowStorage?.clear(); }
+        catch (reason) { setStorageError(reason instanceof Error ? reason.message : String(reason)); }
+        finally { setClearing(false); }
+    };
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -44,6 +62,22 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
 
     return (
         <div className="space-y-3">
+            <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
+                <div className="flex items-center gap-2 text-sm font-semibold"><HardDrive className="size-4" />存储位置与清理</div>
+                {desktop ? <>
+                    <div className="mt-3 text-xs text-stone-500">程序安装目录</div>
+                    <div className="mt-1 break-all font-mono text-xs select-text">{desktop.installDirectory}</div>
+                    <div className="mt-3 text-xs text-stone-500">数据目录（跟随安装位置）</div>
+                    <div className="mt-1 break-all font-mono text-xs select-text">{desktop.dataDirectory}</div>
+                    <p className="mt-3 text-xs text-stone-500">画布、图片、素材、历史、日志、配置、缓存、临时文件及应用内下载都存放于此。已有桌面版数据仅首次迁移，以后打开不重复迁移；不会搬动外部原文件或其他服务的数据。</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        <Button onClick={() => { void window.blinkflowStorage?.open().catch((reason) => setStorageError(String(reason))); }}>打开数据目录</Button>
+                        <Button danger loading={clearing} onClick={() => void clearStorage()}>清除其他数据，保留 API 配置</Button>
+                    </div>
+                    <p className="mt-2 text-xs text-stone-500">清理将删除全部画布、图片、历史、日志、缓存和数据目录内下载等，直接清除、不做备份，并重启。渠道、独立密钥、模型绑定、自定义协议及 Agent 连接凭据保留。</p>
+                </> : <p className="mt-3 text-xs text-stone-500">{window.blinkflowStorage ? "正在读取桌面存储路径…" : "当前是浏览器版，数据由浏览器管理；安装后的桌面版会将数据放在所选安装目录内，并提供保留 API 配置的清理工具。"}</p>}
+                {storageError ? <Alert className="mt-3" type="error" showIcon title="存储操作失败" description={storageError} /> : null}
+            </section>
             <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>

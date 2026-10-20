@@ -18,6 +18,7 @@ web/.checks/
 desktop/release/
 desktop/build-cache/
 desktop/web/
+desktop/BlinkFlowData/
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
 web/public/plugins

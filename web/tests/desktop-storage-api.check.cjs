@@ -1,0 +1,32 @@
+require('./indexeddb-storage.cjs');
+const assert = require('node:assert/strict');
+const { snapshotApi, restoreApi } = require('../../desktop/storage-renderer.cjs');
+const key = 'infinite-canvas:ai_config_store';
+const protocol = JSON.stringify({ state: { protocols: [{ id: 'test', script: 'test' }] }, version: 0 });
+const open = () => new Promise((resolve, reject) => {
+  const request = indexedDB.open('infinite-canvas');
+  request.onupgradeneeded = () => request.result.createObjectStore('call_protocols');
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+(async () => {
+  const channels = [{ id: 'image', apiKey: 'image-fake-key', protocolId: 'test' }, { id: 'text', apiKey: 'text-fake-key' }];
+  localStorage.setItem(key, JSON.stringify({ state: { config: { channels, imageModel: 'image::model', textModel: 'text::model', systemPrompt: 'remove preference' }, webdav: { password: 'remove' } }, version: 0 }));
+  localStorage.setItem('canvas-agent-token', 'fake-agent');
+  localStorage.setItem('infinite-canvas:theme_store', 'remove');
+  const db = await open();
+  await new Promise((resolve) => { const tx = db.transaction('call_protocols', 'readwrite'); tx.objectStore('call_protocols').put(protocol, 'canvas-call-protocols-v1'); tx.oncomplete = resolve; });
+  db.close();
+  const api = await snapshotApi();
+  assert.deepEqual(JSON.parse(api.local[0][1]).state.config.channels, channels);
+  assert(!JSON.stringify(api).includes('remove'));
+  assert.equal(api.protocols[0][1], protocol);
+  for (const entry of api.local) localStorage.removeItem(entry[0]);
+  await restoreApi(api);
+  assert.deepEqual(JSON.parse(localStorage.getItem(key)).state.config.channels, channels);
+  assert.equal(localStorage.getItem('canvas-agent-token'), 'fake-agent');
+  assert.deepEqual((await snapshotApi()).protocols, api.protocols);
+  localStorage.setItem(key, 'broken');
+  await assert.rejects(snapshotApi(), /JSON/);
+  console.log('API retention checks passed: independent keys, model/protocol bindings, exact protocol bytes, Agent credentials, non-API exclusion, restore and damaged-config rejection.');
+})().catch((error) => { console.error(error); process.exitCode = 1; });

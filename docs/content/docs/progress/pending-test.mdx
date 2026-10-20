@@ -5,6 +5,17 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+## Installation-relative desktop storage
+
+- 数据固定为用户安装时所选程序目录内的 `BlinkFlowData`，不是安装包下载目录。安装目录不可写明确报错，不回退 AppData。设置页显示程序目录与数据目录，可打开目录；浏览器版显示不支持桌面路径的说明。
+- 首次在 Electron session 初始化前，将旧桌面 profile 复制、逐文件 SHA256 校验，完成标记阻止以后重复迁移；保留原目录，不提供旧目录清理。先关闭旧版；外部原文件、浏览器版及独立 Agent / 代理进程数据不属于本次迁移。保持 origin / appId / 存储键不变。
+- 全量清理确认后先卸载业务页面和正在运行的请求，保存 API 专用恢复记录，重启后在 profile 打开前清空托管数据文件夹并恢复渠道、独立 Key、模型 / 协议绑定、自定义协议和 Agent 连接凭据。其他画布、素材、图片、历史、日志、缓存、临时文件、Downloads、WebDAV 与偏好均清除，不创建备份。API 恢复失败不得静默启动空配置。
+- NSIS 排除 `BlinkFlowData` 的卸载 / 覆盖安装删除。实际安装器覆盖安装、只读目录报错和原生确认弹窗需验收；本轮版本为 0.20.6，发布状态与附件以 GitHub Release 实际页面为准，旧 0.20.5 安装包不包含本功能。
+- 本轮已执行：`node desktop/tests/storage.check.cjs` 与 `node web/tests/desktop-storage-api.check.cjs` 通过迁移字节校验、一次迁移、源文件保留、全托管目录清理、异常恢复记录阻止删除、独立 Key / 绑定 / 协议与 Agent 凭据恢复及非 API 排除检查；`node tests/run-desktop-storage-ui.cjs` 通过真实 React DOM 的桌面路径、浏览器边界、打开 / 清理调用、取消与错误显示；`npm run typecheck` 通过。
+- 隔离真实 Electron 验收：`desktop/tests/main-runtime.check.cjs` 的 seed / restore 两进程都退出 0，运行的是当前生产 main / preload / snapshot / restore 代码。确认安装目录映射、真实 Blob 下载落入 Downloads，实际清理 IPC 经模拟原生确认后卸载页面并安排重启，下一进程恢复两把模拟 Key 与原协议、清除历史和下载、消费恢复记录。独立 Chromium 存储恢复测试也通过。所有样本与假 Key 均在 `.checks`，没有启动、迁移或清除真实用户 profile；没有发起收费请求。真实原生确认点击与 NSIS 注册覆盖安装未作通过声明。
+- `desktop/tests/storage-installer.nsi` 编译成功，隔离 NSIS 安装 / 卸载样本均退出 0：实际执行生产 `customRemoveFiles` 宏后，程序文件及 resources 已删除而 `BlinkFlowData/Profile` 样本完整保留。此为宏实际执行验收，不等于完整发布安装包验收。
+- 0.20.6 TypeScript、生产构建、既有 `npm run test:cleanup` 再次通过；NSIS x64 安装包已生成（96,782,712 字节，SHA256 `ee6ded911935c02b230c913ac0ba75e21bb7cbf8cf68e35e5e9eb323a501ea79`）。ASAR 中 16 个前端文件及四个桌面模块与当前产物逐字节一致，版本为 0.20.6，无用户数据 / 测试目录；实际安装包解出 78 文件全部与构建输出一致。正式安装器未执行，未替换已注册应用。
+
 ## BlinkFlow 0.20.5 / text settings and resource mention mouse selection
 
 - Text settings and both resource-mention Portal roots now declare the canvas overlay / no-zoom boundary. Mouse interaction inside these body-mounted panels must not enter the ancestor canvas background-selection or pointer-capture path; bubble-only propagation guards are insufficient for React Portal capture events.

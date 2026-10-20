@@ -5,6 +5,8 @@ description: Planned follow-up work
 
 # TODO
 
+- 0.20.6 安装目录存储与保留 API 的清理已实现，专项 / React DOM / 真实 Electron 主进程、下载 / 清理恢复 / NSIS 保留数据宏、类型检查、生产构建及安装包逐字节核验已通过，详见 Pending Tests。正式注册覆盖安装、原生确认实际点击、只读安装目录与真实用户数据迁移仍未宣称验收。不添加旧目录清理按钮，不使用安装包下载目录作为数据位置。
+
 - BlinkFlow 0.20.5 mouse fixes are implemented and recorded in Pending Tests: focused React DOM 5/5, 18 existing regression runners, TypeScript, production build and independent browser acceptance passed. The NSIS package also passed 16-file ASAR / 78-file payload comparisons, version / icon checks and extracted-program production-page startup at 17456. Source-tree and Release asset digests must be verified for each publication before deleting the prior installer. Physical browser Alt-drag and registered overwrite-installation acceptance remain unclaimed.
 - Keep the previous known-good installer until the replacement asset and checksum are verified, then retain one newest local installer; never upload API keys or user data.
 - Installer follow-up: actual overwrite installation and native-window visual acceptance are not claimed. The package was built, extracted byte-for-byte, and its production resources verified at 17456 without replacing the existing registered app. Tests and package checks are in [Pending Tests](/docs/progress/pending-test). Keep appId/userData/origin for upgrades.
