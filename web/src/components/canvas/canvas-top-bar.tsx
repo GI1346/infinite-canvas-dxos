@@ -1,3 +1,4 @@
+import { CanvasWheelSensitivity } from "./canvas-wheel-sensitivity";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Bot, Download, Eraser, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
@@ -179,6 +180,7 @@ export function CanvasTopBar({
                     <Shortcut keys={["Delete / Backspace"]} value={t("canvas.shortcut.delete")} />
                     <Shortcut keys={["Esc"]} value={t("canvas.shortcut.escape")} />
                     <Shortcut keys={[t("canvas.shortcut.dropMedia")]} value={t("canvas.shortcut.upload")} />
+                    <CanvasWheelSensitivity />
                 </div>
             </Modal>
         </>

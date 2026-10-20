@@ -437,7 +437,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     />
                 </div>
 
-                {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
+                {hasImageContent ? <ImageInfoBar node={data} showBytes={showImageInfo} /> : null}
 
                 {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
@@ -909,6 +909,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
                     </button>
                 </div>
             ) : null}
+            {image.content ? <ImageInfoBar node={{ ...node, metadata: { naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight } }} /> : null}
             {image.status === "error" ? <BatchImageFailureActions placement="right" onRetry={onRetry} onDelete={onDelete} /> : null}
         </div>
     );
@@ -942,15 +943,17 @@ function ImageSlotStatus({ image }: { image?: CanvasNodeImage }) {
     );
 }
 
-function ImageInfoBar({ node }: { node: CanvasNodeData }) {
-    const width = Math.round(node.metadata?.naturalWidth || node.width);
-    const height = Math.round(node.metadata?.naturalHeight || node.height);
+function ImageInfoBar({ node, showBytes = false }: { node: CanvasNodeData; showBytes?: boolean }) {
+    const primary = node.metadata?.images?.find((image) => image.id === node.metadata?.primaryImageId) || node.metadata?.images?.[0];
+    const width = Math.round(primary?.naturalWidth || node.metadata?.naturalWidth || 0);
+    const height = Math.round(primary?.naturalHeight || node.metadata?.naturalHeight || 0);
+    if (!width || !height) return null;
     const size = formatBytes(node.metadata?.bytes || 0);
     return (
         <div className="pointer-events-none absolute bottom-3 right-3 z-40 max-w-[calc(100%-24px)]">
             <span className="max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
-                {width} x {height}
-                {size ? ` · ${size}` : ""}
+                {width} × {height} px
+                {showBytes && size ? ` · ${size}` : ""}
             </span>
         </div>
     );

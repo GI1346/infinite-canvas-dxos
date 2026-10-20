@@ -1,3 +1,4 @@
+import { wheelZoomFactor } from "@/stores/use-canvas-navigation-store";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -35,13 +36,26 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     const cuttingRef = useRef(isCuttingConnections);
     cuttingRef.current = isCuttingConnections;
     const viewportRef = useRef(viewport);
+    const paintedRef = useRef<HTMLDivElement>(null);
+    const gridRef = useRef<HTMLDivElement>(null);
+    const committedRef = useRef(viewport);
+    const callbacks = useRef({ onViewportChange, onCanvasDeselect });
+    callbacks.current = { onViewportChange, onCanvasDeselect };
+    const paint = (next: ViewportTransform) => {
+        if (paintedRef.current) paintedRef.current.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) scale(${next.k})`;
+        const grid = gridRef.current?.firstElementChild as HTMLElement | null;
+        if (grid) grid.style.backgroundPosition = `${next.x % (48 * next.k)}px ${next.y % (48 * next.k)}px`;
+    };
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
 
     useLayoutEffect(() => {
+        if (panState.current.isPanning) return;
         viewportRef.current = viewport;
+        committedRef.current = viewport;
+        paint(viewport);
     }, [viewport]);
 
     useEffect(
@@ -85,12 +99,15 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         };
 
         const handleBlur = () => {
+            const wasPanning = panState.current.isPanning;
             spaceRef.current = false;
             setIsSpacePressed(false);
             panState.current.isPanning = false;
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
             frameRef.current = null;
-            nextViewportRef.current = null;
+            const next = nextViewportRef.current || viewportRef.current;
+            nextViewportRef.current = null; viewportRef.current = next; committedRef.current = next; paint(next);
+            if (wasPanning) callbacks.current.onViewportChange(next);
             setIsPanning(false);
             document.body.style.cursor = "";
         };
@@ -118,7 +135,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         frameRef.current = null;
         nextViewportRef.current = null;
         const delta = -event.deltaY;
-        const factor = Math.pow(1.1, delta / 100);
+        const factor = wheelZoomFactor(-delta);
         const newScale = Math.min(Math.max(current.k * factor, 0.05), 5);
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -137,7 +154,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             panState.current.initialX += next.x - current.x;
             panState.current.initialY += next.y - current.y;
         }
-        viewportRef.current = next;
+        viewportRef.current = next; committedRef.current = next; paint(next);
         onViewportChange(next);
     };
 
@@ -169,6 +186,8 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 hasMoved: false,
                 startedOnBackground: isBackgroundClick,
             };
+            // Cancel a focus animation immediately; pan frames remain compositor-only.
+            callbacks.current.onViewportChange(viewportRef.current);
             setIsPanning(true);
             document.body.style.cursor = "grabbing";
             return;
@@ -209,7 +228,11 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 frameRef.current = null;
                 const next = nextViewportRef.current;
                 nextViewportRef.current = null;
-                if (next) { viewportRef.current = next; onViewportChange(next); }
+                if (next) {
+                    viewportRef.current = next; paint(next);
+                    const previous = committedRef.current;
+                    if (Math.abs(next.x - previous.x) / next.k >= 256 || Math.abs(next.y - previous.y) / next.k >= 256) { committedRef.current = next; callbacks.current.onViewportChange(next); }
+                }
             });
         };
 
@@ -217,8 +240,13 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             if (!panState.current.isPanning) return;
 
             if (!panState.current.hasMoved && panState.current.startedOnBackground) {
-                onCanvasDeselect?.();
+                callbacks.current.onCanvasDeselect?.();
             }
+            if (frameRef.current) cancelAnimationFrame(frameRef.current);
+            frameRef.current = null;
+            const next = nextViewportRef.current || viewportRef.current;
+            nextViewportRef.current = null; viewportRef.current = next; committedRef.current = next; paint(next);
+            callbacks.current.onViewportChange(next);
             panState.current.isPanning = false;
             setIsPanning(false);
             document.body.style.cursor = "";
@@ -233,7 +261,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             window.removeEventListener("pointercancel", handlePointerUp);
             document.body.style.cursor = "";
         };
-    }, [onCanvasDeselect, onViewportChange]);
+    }, []);
 
     useEffect(() => {
         const container = containerRef.current;
@@ -264,11 +292,13 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >
-            <CanvasGrid viewport={viewport} mode={backgroundMode} />
+            <div ref={gridRef} className="pointer-events-none absolute inset-0"><CanvasGrid viewport={viewport} mode={backgroundMode} /></div>
             <div
-                className="absolute origin-top-left"
+                ref={paintedRef}
+                data-canvas-world
+                className="absolute origin-top-left will-change-transform"
                 style={{
-                    transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.k})`,
+                    transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k})`,
                 }}
             >
                 {children}

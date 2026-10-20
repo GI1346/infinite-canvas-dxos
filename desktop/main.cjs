@@ -57,6 +57,23 @@ else {
     const trusted = (event) => {
       if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('无效的存储操作来源');
     };
+    ipcMain.handle('downloads:images', async (event, files) => {
+      trusted(event);
+      if (!Array.isArray(files) || files.some((file) => !file || typeof file.name !== 'string' || path.basename(file.name) !== file.name || /[<>:"/\\|?*\x00-\x1f]/.test(file.name) || !(file.data instanceof ArrayBuffer))) throw new Error('无效的图片下载数据');
+      if (!files.length) return { canceled: true, count: 0 };
+      const selected = await dialog.showOpenDialog(win, { title: '选择批量图片保存目录', defaultPath: path.join(dataDirectory, 'Downloads'), properties: ['openDirectory', 'createDirectory'] });
+      if (selected.canceled || !selected.filePaths[0]) return { canceled: true, count: 0 };
+      const directory = selected.filePaths[0]; let count = 0;
+      for (const file of files) {
+        const parsed = path.parse(file.name); let index = 1, destination = path.join(directory, file.name);
+        while (true) {
+          try { await fs.promises.writeFile(destination, Buffer.from(file.data), { flag: 'wx' }); break; }
+          catch (error) { if (error.code !== 'EEXIST') throw error; destination = path.join(directory, parsed.name + ' (' + index++ + ')' + parsed.ext); }
+        }
+        count++;
+      }
+      return { canceled: false, count, directory };
+    });
     ipcMain.handle('storage:info', (event) => { trusted(event); return { installDirectory, dataDirectory }; });
     ipcMain.handle('storage:open', async (event) => { trusted(event); const error = await shell.openPath(dataDirectory); if (error) throw new Error(error); });
     ipcMain.handle('storage:clear', async (event) => {

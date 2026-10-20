@@ -107,8 +107,10 @@ async function gestures() {
         });
         assert.ok(viewport.k > start.k); assert.deepEqual(viewport, zoomed!);
         const before = { ...viewport }; await fire(window, pointer("pointermove", { clientX: 150, clientY: 130 })); await act(async () => { await tick(); });
-        assert.equal(viewport.k, before.k); assert.equal(viewport.x, before.x + 20); assert.equal(viewport.y, before.y + 10);
-        await up(); await key("keyup");
+        assert.equal(viewport.k, before.k);
+        const transform = ref.current!.querySelector<HTMLElement>("[data-canvas-world]")!.style.transform;
+        assert.ok(transform.includes(`translate3d(${before.x + 20}px, ${before.y + 10}px`), transform);
+        await up(); assert.equal(viewport.x, before.x + 20); assert.equal(viewport.y, before.y + 10); await key("keyup");
     });
     await test("侧栏改变容器边界后嵌套节点滚轮始终锚定鼠标世界坐标，连续事件可跨不同鼠标位置", async () => {
         const nested = document.createElement("span"); controls[3].appendChild(nested);
@@ -198,7 +200,10 @@ async function workflows() {
         assert.equal(host.getNode(concurrent.id)!.metadata!.size, "auto");
         assert.equal(relayImageInput({ ...defaultConfig, size: "auto" }, "尺寸验收", []).input.size, undefined);
         await value(label(batchEl(), "生成分辨率"), "1k");
-        assert.equal(host.getNode(concurrent.id)!.metadata!.size, "1024x1024");
+        assert.equal(host.getNode(concurrent.id)!.metadata!.size, "auto");
+        assert.equal(label(batchEl(), "生成比例").value, "auto");
+        for (const resolution of ["2k", "4k"]) { await value(label(batchEl(), "生成分辨率"), resolution); assert.equal(label(batchEl(), "生成比例").value, "auto"); assert.equal(label(batchEl(), "生成分辨率").value, resolution); const payload = relayImageInput({ ...defaultConfig, size: "auto", imageResolution: resolution }, "auto验收", []); assert.equal(payload.input.size, "auto"); assert.equal(payload.input.resolution, resolution); }
+        await value(label(batchEl(), "生成分辨率"), "1k");
     });
     await test("模型、比例、分辨率、质量选择写入节点元数据", async () => {
         await value(label(batchEl(), "模型与中转站"), "image-relay:model"); assert.equal(host.getNode(concurrent.id)!.metadata!.model, "image-relay:model");

@@ -53,6 +53,7 @@ export type AiConfig = {
     models: string[];
     quality: string;
     size: string;
+    imageResolution?: string;
     background: string;
     count: string;
     canvasImageCount: string;

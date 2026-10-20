@@ -24,7 +24,7 @@ export function collectDownloadImages(selectedIds: Iterable<string>, nodes: Canv
     return images;
 }
 
-export async function createCanvasImageZip(selectedIds: Iterable<string>, nodes: CanvasNodeData[]) {
+export async function collectCanvasImageFiles(selectedIds: Iterable<string>, nodes: CanvasNodeData[]) {
     const files: { name: string; data: Blob }[] = [], used = new Set<string>();
     let skipped = 0;
     for (const image of collectDownloadImages(selectedIds, nodes)) {
@@ -38,5 +38,10 @@ export async function createCanvasImageZip(selectedIds: Iterable<string>, nodes:
             used.add(name.toLowerCase()); files.push({ name, data: blob });
         } catch { skipped++; }
     }
-    return { blob: files.length ? await createZip(files) : null, count: files.length, skipped };
+    return { files, count: files.length, skipped };
+}
+
+export async function createCanvasImageZip(selectedIds: Iterable<string>, nodes: CanvasNodeData[]) {
+    const result = await collectCanvasImageFiles(selectedIds, nodes);
+    return { blob: result.files.length ? await createZip(result.files) : null, count: result.count, skipped: result.skipped };
 }

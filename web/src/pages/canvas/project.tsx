@@ -1,3 +1,4 @@
+import { isCanvasNodeVisible } from "@/lib/canvas/canvas-visibility";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -33,6 +34,7 @@ import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-pa
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodePaintDialog } from "@/components/canvas/canvas-node-paint-dialog";
+import { CanvasImagePreviewDialog } from "@/components/canvas/canvas-image-preview-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
@@ -734,19 +736,20 @@ function InfiniteCanvasPage() {
         [screenToCanvas],
     );
 
+    const cullLeft = Math.floor(-viewport.x / viewport.k / 512) * 512;
+    const cullTop = Math.floor(-viewport.y / viewport.k / 512) * 512;
     const viewBounds = useMemo(() => {
         const padding = 280;
-        const rect = containerRef.current?.getBoundingClientRect();
-        const width = rect?.width || size.width;
-        const height = rect?.height || size.height;
-        const left = -viewport.x / viewport.k - padding;
-        const top = -viewport.y / viewport.k - padding;
-        return { left, top, right: left + width / viewport.k + padding * 2, bottom: top + height / viewport.k + padding * 2 };
-        // `nodes` keeps the container rect re-read on node changes, matching the previous behaviour when the container resizes without a size update.
-    }, [nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+        const width = size.width;
+        const height = size.height;
+        const left = cullLeft - padding;
+        const top = cullTop - padding;
+        return { left, top, right: left + width / viewport.k + padding * 2 + 512, bottom: top + height / viewport.k + padding * 2 + 512 };
+        // Quantized overscan avoids remounting image/workflow nodes on every pan frame.
+    }, [size.height, size.width, viewport.k, cullLeft, cullTop]);
 
     const visibleNodes = useMemo(
-        () => nodes.filter((node) => node.position.x + node.width > viewBounds.left && node.position.x < viewBounds.right && node.position.y + node.height > viewBounds.top && node.position.y < viewBounds.bottom),
+        () => nodes.filter((node) => isCanvasNodeVisible(node, viewBounds)),
         [nodes, viewBounds],
     );
 
@@ -3589,17 +3592,7 @@ function InfiniteCanvasPage() {
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
 
-                <Modal
-                    title={t("canvas.projectPage.imageDetails")}
-                    open={Boolean(previewContent)}
-                    centered
-                    onCancel={() => setPreviewNodeId(null)}
-                    footer={null}
-                    width="auto"
-                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
-                >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
-                </Modal>
+                <CanvasImagePreviewDialog dataUrl={previewContent || ""} title={previewNode?.title || t("assets.kinds.image")} open={Boolean(previewContent)} onClose={() => setPreviewNodeId(null)} />
 
                 <Modal
                     title={t("canvas.projectPage.clearTitle")}

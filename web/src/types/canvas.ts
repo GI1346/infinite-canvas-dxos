@@ -67,6 +67,8 @@ export type CanvasNodeMetadata = {
     model?: string;
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
     size?: string;
+    imageResolution?: string;
+    imageAspectRatio?: string;
     quality?: string;
     background?: string;
     count?: number;

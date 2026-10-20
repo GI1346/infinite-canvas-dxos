@@ -35,7 +35,7 @@ async function main() {
     }
     const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
     await act(async () => { root.render(<ConfigProvider virtual={false}><App><Harness /></App></ConfigProvider>); await tick(); });
-    const button = () => { const result = host.querySelector<HTMLButtonElement>('[aria-label="批量下载图片（ZIP）"]'); assert.ok(result); return result; };
+    const button = () => { const result = host.querySelector<HTMLButtonElement>('[aria-label="批量下载图片（选择目录）"]'); assert.ok(result); return result; };
     const mode = async (name: string) => act(async () => { renderMode(name); await tick(); });
     try {
         await test("框选多图显示中文批量下载，点击一次输出一个ZIP且名称与原始MIME正确", async () => {
@@ -61,13 +61,18 @@ async function main() {
             await act(async () => { release(); await tick(30); }); assert.equal(saved.length, before + 1); assert.equal(reads.length, readCount + 2); assert.equal(button().disabled, false); readBlob = original;
         });
         await test("纯文本多选、仅一图和框选拖动未结束时不显示图片批量入口", async () => {
-            for (const name of ["text", "single", "hidden"]) { await mode(name); assert.equal(host.querySelector('[aria-label="批量下载图片（ZIP）"]'), null); }
+            for (const name of ["text", "single", "hidden"]) { await mode(name); assert.equal(host.querySelector('[aria-label="批量下载图片（选择目录）"]'), null); }
         });
         await test("项目已接线实时nodes/selectedIds和单组入口；原始图片读取复用既有代理与超时实现", () => {
             const source = readFileSync("src/pages/canvas/project.tsx", "utf8"), storage = readFileSync("src/services/image-storage.ts", "utf8");
             assert.ok(source.includes("onBatchDownload={(node) => void downloadImages([node.id], nodesRef.current, node.title || \"分组图片\")}"));
             assert.ok(source.includes("onDownload={() => void downloadImages(selectedNodeIdsRef.current, nodesRef.current)}")); assert.ok(source.includes("downloading={batchDownloading}"));
             assert.ok(storage.includes("export async function fetchImageBlob(")); assert.ok(storage.includes("fetch(withLocalProxy(url), { signal: controller.signal })"));
+        });
+        await test("桌面批量保存选目录、原图字节传入且取消不回退默认路径", async () => {
+            await mode("group"); let calls = 0;
+            window.blinkflowDownloads = { saveImages: async (files) => { calls++; assert.deepEqual(files.map(f => f.name).sort(), ["重命名-A.png", "重命名-B.jpg"]); assert.equal(new TextDecoder().decode(files[0].data), "original-a"); return { canceled: true, count: 0 }; } };
+            const count = saved.length; await click(button()); assert.equal(calls, 1); assert.equal(saved.length, count); delete window.blinkflowDownloads;
         });
         console.log(`Batch download UI: ${passed}/${passed} passed (real React/Ant UI, real ZIP bytes, original image I/O and save dialog mocked)`);
     } finally { await act(async () => root.unmount()); host.remove(); }

@@ -5,6 +5,24 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+## BlinkFlow 0.20.7 / navigation, preview and generation continuity
+
+- 图片预览改为围绕鼠标位置滚轮缩放与左键拖动，图片操作不改变背景画布；关闭 / 重开与更换源图重置预览状态。图片信息采用实际源图自然宽高，而非节点显示宽高。
+- 运行中的并发生成和 LLM 节点离开视口仍保持挂载，避免可见区域裁剪触发卸载、停止本机查询但远端继续成功。主动停止、删除与实际卸载仍按原语义处理；轮询仍为 3 秒、超时仍为 10 分钟，没有延长或静默重提。
+- 快捷键面板提供滚轮缩放灵敏度 1–100，默认 50、取整并限制范围，保存后持久化；画布鼠标点缩放语义保持不变。
+- 桌面框选 / 分组批量下载打开目录选择器，取消不写文件；选中目录保存原始图片字节、沿用节点名称和实际扩展名，已有同名文件加后缀不覆盖，不回退默认目录。浏览器目录 / ZIP 路径仍区分处理；不修改原图、连线或 API 配置。
+- auto 比例与 2K / 4K 分辨率作为独立参数保存和传入原生异步任务；不再由 auto 比例抹掉分辨率等级。此处验证的是请求参数，最终像素以远端实际图片为准。
+- 平移采用 compositor 变换，并通过量化 overscan 减少可见性计算及整页逐帧 React 更新；手势结束提交准确视口位置。运行中节点不被 overscan 裁掉。
+
+### 本轮已执行检查
+
+- 既有 `node tests/run-interactions.cjs` 30/30、原生任务及工作流回归 27/27、`node tests/run-batch-download-ui.cjs` 7/7 通过。
+- `node tests/run-navigation-0207.cjs` 通过灵敏度 1 / 50 / 100、越界限制、持久化与并发 / LLM 运行状态离屏保留检查；400 图片节点、20 帧小范围平移的父级 React commit 为零，释放后的最终位置准确。该隔离性能用例不等于所有真实画布均无渲染。
+- `node tests/run-image-preview.cjs` 的真实 React DOM 交互通过：鼠标点双向及连续缩放、左拖、Ctrl 隔离、捕获释放、失焦 / 取消、重置、竖图 / 换图 / 重开与错误 / 关闭，背景画布未变。独立浏览器 fixture 实际滚轮缩放 55% → 117%，左键拖动 75 / 60 后背景仍不动；证据 `.checks/preview-0207-browser.png`。未改动用户画布。
+- `node tests/run-relay-offscreen-0207.cjs` 运行真实 Concurrent 组件和 `requestRelayImage` 链路，auto + 2K / 4K 各两行均验证原生提交、等待查询期间移出视口不取消、成功输出、任务 ID / 结果持久化且不重复提交。仅网络 I/O mock，不使用真实 Key、不收费，不宣称真实远端账号或最终像素已验收。
+- `node desktop/tests/downloads-runtime.check.cjs` 在隔离真实 Electron 中运行生产 main / preload；验证目录取消零落盘、指定目录原 PNG 字节、中文重命名、重名保护、无默认目录回退、空选择不弹框和不可信 IPC 拒绝。原生 dialog stub，不等同实际原生弹窗点击。GPU 环境需要的 switches 仅用于测试，没有修改生产启动业务。结果 `.checks/downloads-runtime-0207-result.json`。
+- 0.20.7 TypeScript、生产构建及 NSIS x64 打包通过；16 个前端文件、4 个桌面模块和实际安装器解出的 78 文件逐字节一致，应用 / 安装器版本与七帧图标通过。安装包 96,784,953 字节，SHA256 `a4a0a92f1a6775d7acbe39578b70a39e5890bb982b76e24bcc2136fb87af1e05`。未执行安装向导或覆盖注册安装。发布状态以 [v0.20.7 Release](https://github.com/GI1346/infinite-canvas-dxos/releases/tag/v0.20.7) 实际附件为准；源码树和远端附件校验成功后才删除旧安装包，本地保留一份最新版。不上传真实 Key 或用户数据。
+
 ## Installation-relative desktop storage
 
 - 数据固定为用户安装时所选程序目录内的 `BlinkFlowData`，不是安装包下载目录。安装目录不可写明确报错，不回退 AppData。设置页显示程序目录与数据目录，可打开目录；浏览器版显示不支持桌面路径的说明。

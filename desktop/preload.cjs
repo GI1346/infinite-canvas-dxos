@@ -4,3 +4,5 @@ contextBridge.exposeInMainWorld('blinkflowStorage', {
   open: () => ipcRenderer.invoke('storage:open'),
   clear: () => ipcRenderer.invoke('storage:clear'),
 });
+
+contextBridge.exposeInMainWorld('blinkflowDownloads', { saveImages: (files) => ipcRenderer.invoke('downloads:images', files) });

@@ -70,7 +70,7 @@ export function CanvasSelectionToolbar({
                     onPointerDown={(event) => event.stopPropagation()}
                 >
                     <SelectionAction title="宫格布局" label="宫格布局" icon={<Group className="size-4" />} onClick={onGrid} />
-                    {onDownload && nodes.some((node) => node.type === "image" || node.type === "group") ? <SelectionAction title="批量下载图片（ZIP）" label={downloading ? "打包中…" : "批量下载"} icon={<Download className="size-4" />} onClick={onDownload} disabled={downloading} /> : null}
+                    {onDownload && nodes.some((node) => node.type === "image" || node.type === "group") ? <SelectionAction title="批量下载图片（选择目录）" label={downloading ? "打包中…" : "批量下载"} icon={<Download className="size-4" />} onClick={onDownload} disabled={downloading} /> : null}
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
                     {canUngroup ? <SelectionAction title={t("canvas.nodeToolbar.ungroupTitle")} label={t("canvas.nodeToolbar.ungroup")} icon={<Ungroup className="size-4" />} onClick={onUngroup} /> : null}
                 </div>

@@ -1,3 +1,4 @@
+import { CanvasWheelSensitivity } from "./canvas-wheel-sensitivity";
 import type { ReactNode } from "react";
 import { Compass, Focus, HelpCircle } from "lucide-react";
 import { useState } from "react";
@@ -70,6 +71,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                     <Shortcut label="Ctrl / Cmd + G" value={t("canvas.shortcut.group")} />
                     <Shortcut label="Ctrl / Cmd + Shift + G" value={t("canvas.shortcut.ungroup")} />
                     <Shortcut label="Delete / Backspace" value={t("canvas.shortcut.delete")} />
+                    <CanvasWheelSensitivity />
                 </div>
             </Modal>
         </div>

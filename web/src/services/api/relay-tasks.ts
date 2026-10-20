@@ -13,6 +13,7 @@ export function relayImageInput(config: AiConfig, prompt: string, references: st
     return { kind: "image", model: modelOptionName(config.model || config.imageModel), input: {
         prompt, n: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1))),
         ...(config.size && config.size !== "auto" ? { size: config.size } : {}),
+        ...(config.imageResolution && config.imageResolution !== "auto" ? { resolution: config.imageResolution, ...(config.size === "auto" ? { size: "auto" } : {}) } : {}),
         ...(config.quality && config.quality !== "auto" ? { quality: config.quality } : {}),
         ...(references.length ? { image_urls: references } : {}),
     } };
