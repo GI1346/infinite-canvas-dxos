@@ -151,6 +151,35 @@ async function main() {
                 await key("z", { ctrlKey: true, shiftKey: true }); assert.deepEqual(h.state.nodes, final); assert.deepEqual(h.state.nodes[0], completed);
             } finally { await h.close(); }
         });
+        await test("取消复制保留期间完成的原图结果，随后历史快照不包含临时副本或幽灵连线", async () => {
+            for (const cancel of ["pointercancel", "blur", "Escape"]) {
+                const a = { ...node("a"), metadata: { status: "loading" as const } }, b = node("b", 250), originals = [a, b], connections = [edge("link", "a", "b", "input-3")], h = await mount({ nodes: originals, connections, selected: ["a"] });
+                try {
+                    await down(h.title("a"), { clientX: 400, clientY: 300, altKey: true }); await move({ clientX: 440, clientY: 320, altKey: true }); assert.equal(h.state.nodes.length, 3);
+                    await act(async () => { h.state.updateOriginal("a", { status: "success", content: "data:image/png;base64,AQ==" }); await tick(); });
+                    const completed = structuredClone(h.state.nodes[0]);
+                    await fire(window, cancel === "Escape" ? new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }) : cancel === "blur" ? new Event("blur") : pointer("pointercancel"));
+                    await up({ clientX: 460, clientY: 330 }); await act(async () => { await tick(210); });
+                    assert.deepEqual(h.state.nodes, [completed, b]); assert.deepEqual(h.state.connections, connections); assert.deepEqual(h.state.selected, new Set(["a"]));
+                    assert.equal(h.state.history.past.length, 1); assert.equal(h.state.history.future.length, 0);
+                    for (const snapshot of [...h.state.history.past, h.state.last]) { assert.deepEqual(snapshot.nodes.map((n: CanvasNodeData) => n.id), ["a", "b"]); assert.deepEqual(snapshot.connections, connections); }
+                    await key("z", { ctrlKey: true }); assert.deepEqual(h.state.nodes, originals); await key("z", { ctrlKey: true, shiftKey: true }); assert.deepEqual(h.state.nodes, [completed, b]);
+                } finally { await h.close(); }
+            }
+        });
+        await test("跨过历史防抖时长的慢速多帧复制只在最终释放时提交一条历史，重复pointerup/mouseup不重复提交", async () => {
+            const a = node("a"), h = await mount({ nodes: [a] });
+            try {
+                await down(h.title("a"), { clientX: 400, clientY: 300, altKey: true }); await move({ clientX: 440, clientY: 320, altKey: true });
+                for (const [clientX, clientY] of [[460, 330], [480, 340], [500, 350]]) {
+                    await move({ clientX, clientY, altKey: true }); await act(async () => { await tick(210); }); assert.equal(h.state.nodes.length, 2); assert.equal(h.state.history.past.length, 0);
+                }
+                await up({ clientX: 520, clientY: 360 }); const final = JSON.stringify(h.state.nodes);
+                await up({ clientX: 540, clientY: 380 }); await act(async () => { await tick(210); });
+                assert.equal(JSON.stringify(h.state.nodes), final); assert.deepEqual(h.state.nodes[0], a); assert.deepEqual(h.state.nodes[1].position, { x: 140, y: 100 }); assert.equal(h.state.history.past.length, 1);
+                await key("z", { ctrlKey: true }); assert.deepEqual(h.state.nodes, [a]); await key("z", { ctrlKey: true, shiftKey: true }); assert.equal(JSON.stringify(h.state.nodes), final);
+            } finally { await h.close(); }
+        });
         await test("普通drag不复制且晚按Alt不变复制；普通分组drag递归移动所有后代", async () => {
             const originals = [node("group", 0, 0, "group"), node("inner", 40, 60, "group", "group"), node("a", 60, 80, "image", "inner")];
             const h = await mount({ nodes: originals });

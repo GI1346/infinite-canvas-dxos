@@ -47,6 +47,7 @@
 
 ## 画布 UI 规范
 
+- 画布内通过 Portal 挂到 document.body 的设置面板、引用候选菜单等交互浮层，根元素必须带 data-canvas-overlay 和 data-canvas-no-zoom；仅在冒泡阶段 stopPropagation 无法阻止 React Portal 祖先的捕获阶段，验收须包含 pointerdown 到 click 完整鼠标事件序列，确认不启动背景框选、捕获指针或平移缩放。
 - 做 canvas 前端 UI 时必须遵循当前画布主题。
 - 优先使用 `canvasThemes`、`useThemeStore` 或 Ant Design `ConfigProvider` token。
 - 不要硬编码黑白、stone、slate 等颜色导致浅色/深色主题不一致。
