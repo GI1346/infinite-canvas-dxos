@@ -5,6 +5,21 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+## BlinkFlow 0.20.8 / icon, defaults and startup
+
+- 图标仅移除主体轮廓外的白色底边与边角，保留主体中的白色细节；网页 PNG 与 Windows 16 / 24 / 32 / 48 / 64 / 128 / 256 像素 ICO 使用透明外部区域。
+- 右键节点选择菜单及底部工具栏按「文本、图片、多维表格、LLM 多模态分析、生成配置、组、视频、并发生成、音频」排列，第三方扩展接在后面。视频与音频只交换位置，不删除；表格与 LLM 不重复出现。
+- 干净配置及缺失偏好字段采用纯白主题、线网格、画布默认生成 1 张、默认生图 2K。已保存的主题、项目网格、生成张数与分辨率仍受尊重，不覆盖独立渠道、Key、模型或自定义协议。并发节点界面与有效全局分辨率一致，显式 auto 比例仍可与 2K / 4K 独立组合。
+- 桌面程序每次启动在显示前最大化；上次退出前缩小窗口不影响下次启动。安装目录、存储键及数据位置不变。
+- 本机 Agent 连接属于独立本地配置，不随源码或安装包分发个人连接信息。
+
+### 已执行检查与边界
+
+- `node tests/run-defaults-menu-0208.cjs`：5 组通过，覆盖首次绘制、干净默认、缺失字段回退、已保存偏好及两组独立模拟 Key 保留、菜单 / 工具栏顺序和创建动作、并发继承 2K 与 auto 比例配合 2K / 4K。独立真实 React DOM 的完整 pointerdown → mousedown → pointerup → mouseup → click 序列亦通过。
+- `desktop/tests/startup-icon.check.cjs` 在隔离真实 Electron 中执行 initial / reopen 两次：两次启动均为最大化可见窗口，第一次退出前主动设为 1000 × 700；PNG 与全部七档 ICO 四角 alpha 为零，主体中心仍不透明。测试使用隔离目录与生产 main / preload 副本，不替换已注册安装；GPU / sandbox 启动参数仅属于测试环境，生产 sandbox 保持启用。
+- TypeScript、设置浮层、文本 @ 候选 5/5、工作流拖动 / 端口 10/10、LLM 16/16、原生异步接口 27/27 与工作流、导航和平移、图片预览回归通过。请求链使用模拟网络，没有发起真实付费生图；隔离窗口测试不等同完整 NSIS 注册覆盖安装或任务栏视觉缓存验收。
+- 新版本包体、安装器与 Release 源码树 / 附件以当次发布回执核对，不沿用 0.20.7 安装包结果。远端附件校验后才移除旧安装包，本地保留一份最新版；不上传用户数据与真实 Key。
+
 ## BlinkFlow 0.20.7 / navigation, preview and generation continuity
 
 - 图片预览改为围绕鼠标位置滚轮缩放与左键拖动，图片操作不改变背景画布；关闭 / 重开与更换源图重置预览状态。图片信息采用实际源图自然宽高，而非节点显示宽高。

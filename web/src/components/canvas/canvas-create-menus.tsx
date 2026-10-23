@@ -85,7 +85,11 @@ export function NodeCreateMenu({ position, scale = 1, onCreate, onClose }: { pos
     const { t } = useTranslation();
     useNodeRegistryVersion();
     const menuRef = useRef<HTMLDivElement>(null);
-    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false);
+    const order = [CanvasNodeType.Text, CanvasNodeType.Image, "dxos:table", "dxos:llm", CanvasNodeType.Config, CanvasNodeType.Group, CanvasNodeType.Video, "dxos:concurrent", CanvasNodeType.Audio] as string[];
+    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false).sort((a, b) => {
+        const first = order.indexOf(a.type), second = order.indexOf(b.type);
+        return (first < 0 ? order.length : first) - (second < 0 ? order.length : second);
+    });
     // Close automatically when clicking outside the menu.
     useEffect(() => {
         const handlePointerDown = (event: PointerEvent) => {

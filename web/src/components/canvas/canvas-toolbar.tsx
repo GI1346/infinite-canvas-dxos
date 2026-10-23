@@ -113,11 +113,11 @@ export function CanvasToolbar({
                 <ToolbarButton id="tool-image" label={t("canvas.toolbar.image")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddImage}>
                     <ImageIcon className="size-4.5" />
                 </ToolbarButton>
-                <ToolbarButton id="tool-video" label={t("canvas.toolbar.video")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddVideo}>
-                    <Video className="size-4.5" />
+                <ToolbarButton id="tool-table" label="多维表格" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onAddExtensionNode("dxos:table")}>
+                    <Table2 className="size-4.5" />
                 </ToolbarButton>
-                <ToolbarButton id="tool-audio" label={t("canvas.toolbar.audio")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddAudio}>
-                    <Music2 className="size-4.5" />
+                <ToolbarButton id="tool-llm" label="LLM 多模态分析" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onAddExtensionNode("dxos:llm")}>
+                    <BrainCircuit className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton id="tool-config" label={t("canvas.toolbar.config")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddConfig}>
                     <Settings2 className="size-4.5" />
@@ -125,14 +125,14 @@ export function CanvasToolbar({
                 <ToolbarButton id="tool-group" label={t("canvas.toolbar.group")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddGroup}>
                     <Group className="size-4.5" />
                 </ToolbarButton>
-                <ToolbarButton id="tool-table" label="多维表格" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onAddExtensionNode("dxos:table")}>
-                    <Table2 className="size-4.5" />
+                <ToolbarButton id="tool-video" label={t("canvas.toolbar.video")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddVideo}>
+                    <Video className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton id="tool-concurrent" label="并发生成" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onAddExtensionNode("dxos:concurrent")}>
                     <Layers className="size-4.5" />
                 </ToolbarButton>
-                <ToolbarButton id="tool-llm" label="LLM 多模态分析" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onAddExtensionNode("dxos:llm")}>
-                    <BrainCircuit className="size-4.5" />
+                <ToolbarButton id="tool-audio" label={t("canvas.toolbar.audio")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddAudio}>
+                    <Music2 className="size-4.5" />
                 </ToolbarButton>
                 {extensionDefs.length ? (
                     <ToolbarButton

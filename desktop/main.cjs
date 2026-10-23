@@ -52,7 +52,7 @@ else {
       } catch { res.writeHead(400); res.end(); }
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(17456, '127.0.0.1', resolve); });
-    const win = new BrowserWindow({ width: 1440, height: 960, minWidth: 900, minHeight: 650, title: 'BlinkFlow', icon: path.join(__dirname, 'assets', 'blinkflow.ico'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+    const win = new BrowserWindow({ width: 1440, height: 960, minWidth: 900, minHeight: 650, show: false, title: 'BlinkFlow', icon: path.join(__dirname, 'assets', 'blinkflow.ico'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
     let clearing = false;
     const trusted = (event) => {
       if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('无效的存储操作来源');
@@ -114,6 +114,9 @@ else {
     }
     await win.loadURL(origin);
     win.setMenuBarVisibility(false);
+    // Every launch starts maximized, independent of the previous window size.
+    win.maximize();
+    win.show();
   }).catch((error) => { dialog.showErrorBox('启动失败', String(error.message || error)); app.quit(); });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => server?.close());
