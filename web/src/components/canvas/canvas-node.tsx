@@ -1,3 +1,4 @@
+import { LOCAL_FUSION_NODE_TYPE, FUSION_PATCH_PORT } from "@/lib/canvas/canvas-fusion-ports";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
@@ -454,6 +455,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             </div>
 
             {!referenceSelectionState && data.type === "dxos:table" ? (data.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }]).map((channel, index, all) => <div key={channel.id} className="absolute -left-6 z-40 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center" style={{ top: `calc(50% + ${(index - (all.length - 1) / 2) * 56}px)` }} data-node-handle data-table-port={channel.id} title={`输入 ${index + 1}：拖动连线到此处`} onMouseDown={(event) => onConnectStart(event, data.id, "target", channel.id)}><span className="grid size-5 place-items-center rounded-full border text-[10px]" style={{ background: theme.node.panel, color: theme.node.text, borderColor: theme.node.muted }}>{index + 1}</span></div>) : null}
+            {!referenceSelectionState && data.type === LOCAL_FUSION_NODE_TYPE ? <div data-node-handle data-fusion-port={FUSION_PATCH_PORT} title="局部修改输入：将带选区上下文的图片连接到这里" className="absolute -right-6 z-40 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center" style={{ top: 40 }} onMouseDown={(event) => onConnectStart(event, data.id, "target", FUSION_PATCH_PORT)}><span className="grid size-5 place-items-center rounded-full border text-[10px]" style={{ background: theme.node.panel, color: theme.node.text, borderColor: theme.node.muted }}>局</span></div> : null}
             {!referenceSelectionState && !isGroup && data.type !== "dxos:table" ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? <ConnectionHandleDot side="right" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
@@ -471,7 +473,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
     if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length && (props.node.metadata.status !== "error" || props.node.metadata.texts.some((text) => text.content))) return <TextContent {...props} />;
-    const workflowDefinition = props.node.type.startsWith("dxos:") ? getNodeDefinition(props.node.type) : undefined;
+    const workflowDefinition = (props.node.type.startsWith("dxos:") || props.node.type === LOCAL_FUSION_NODE_TYPE) ? getNodeDefinition(props.node.type) : undefined;
     if (workflowDefinition?.Content && props.pluginContext) { const Content = workflowDefinition.Content; return <Content ctx={props.pluginContext} />; }
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;

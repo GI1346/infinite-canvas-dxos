@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
@@ -18,6 +18,7 @@ import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/type
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 type PluginHostParams = {
+    projectId?: string;
     effectiveConfig: AiConfig;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (open: boolean) => void;
@@ -37,6 +38,8 @@ type PluginHostParams = {
 export function usePluginHost(params: PluginHostParams) {
     const { t } = useTranslation();
     const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
+    const projectIdRef = useRef(params.projectId);
+    projectIdRef.current = params.projectId;
 
     // Host capabilities available to plugin nodes; methods receive nodeId and are not bound to a specific node.
     const pluginAi = useMemo<CanvasPluginAi>(() => {
@@ -93,6 +96,7 @@ export function usePluginHost(params: PluginHostParams) {
 
     const pluginHost = useMemo<CanvasPluginHost>(
         () => ({
+            getProjectId: () => projectIdRef.current,
             getNode: (id) => nodesRef.current.find((node) => node.id === id) || null,
             getNodes: () => nodesRef.current,
             getConnections: () => connectionsRef.current,

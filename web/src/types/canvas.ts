@@ -44,7 +44,21 @@ export type CanvasNodeText = {
     content: string;
 };
 
+export type CanvasCropRect = { x: number; y: number; width: number; height: number };
+export type CanvasCropContext = { full: true } | { conflict: true } | {
+    version: 1;
+    sourceNodeId: string;
+    sourceIdentity: string;
+    sourceStorageKey?: string;
+    sourceWidth: number;
+    sourceHeight: number;
+    rect: CanvasCropRect;
+    paddedRect: CanvasCropRect;
+};
+
 export type CanvasNodeMetadata = {
+    cropContext?: CanvasCropContext;
+    fusionColorMatch?: boolean;
     llmOutputMode?: "text" | "list";
     llmChannelId?: string;
     llmOutputNodeId?: string;
@@ -155,6 +169,8 @@ export type ConnectionHandle = {
     nodeId: string;
     handleType: "source" | "target";
     portId?: string;
+    // Snapshot the selected outputs at drag start; later selection changes must not change this connection.
+    sourceNodeIds?: string[];
 };
 
 export type SelectionBox = {

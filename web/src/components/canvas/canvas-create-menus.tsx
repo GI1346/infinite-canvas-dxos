@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Table2, Layers, ImageIcon, List, Music2, Settings2, Video, X } from "lucide-react";
+import { Blend, Table2, Layers, ImageIcon, List, Music2, Video, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -49,7 +49,7 @@ export function ConnectionCreateMenu({
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-4" />} title={t("canvas.createMenu.image")} onClick={() => onCreate(CanvasNodeType.Image)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-4" />} title={t("canvas.createMenu.video")} onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption theme={theme} icon={<Music2 className="size-4" />} title={t("canvas.createMenu.audio")} onClick={() => onCreate(CanvasNodeType.Audio)} />
-                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-4" />} title={t("canvas.createMenu.config")} description={t("canvas.createMenu.configDescription")} onClick={() => onCreate(CanvasNodeType.Config)} />
+                <ConnectionCreateOption theme={theme} icon={<Blend className="size-4" />} title="融合节点" description="将局部修改融合回原图" onClick={() => onCreate("blinkflow:fusion")} />
             </div>
         </div>
     );
@@ -85,8 +85,8 @@ export function NodeCreateMenu({ position, scale = 1, onCreate, onClose }: { pos
     const { t } = useTranslation();
     useNodeRegistryVersion();
     const menuRef = useRef<HTMLDivElement>(null);
-    const order = [CanvasNodeType.Text, CanvasNodeType.Image, "dxos:table", "dxos:llm", CanvasNodeType.Config, CanvasNodeType.Group, CanvasNodeType.Video, "dxos:concurrent", CanvasNodeType.Audio] as string[];
-    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false).sort((a, b) => {
+    const order = [CanvasNodeType.Text, CanvasNodeType.Image, "dxos:table", "dxos:llm", "blinkflow:fusion", CanvasNodeType.Video, "dxos:concurrent", CanvasNodeType.Audio] as string[];
+    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false && def.type !== CanvasNodeType.Config && def.type !== CanvasNodeType.Group).sort((a, b) => {
         const first = order.indexOf(a.type), second = order.indexOf(b.type);
         return (first < 0 ? order.length : first) - (second < 0 ? order.length : second);
     });

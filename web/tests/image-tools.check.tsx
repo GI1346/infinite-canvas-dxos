@@ -118,7 +118,7 @@ async function toolbarChecks() {
         const node: CanvasNodeData = { id: "toolbar-name-gap", type: CanvasNodeType.Image, title: "商品主图", position: { x: 100, y: 300 }, width: 300, height: 225, metadata: { content: "data:image/png;base64,original" } };
         for (const k of [.25, 1, 2, 5]) {
             const viewport = { x: 24, y: 70, k };
-            await act(async () => { root.render(<ConfigProvider virtual={false}><App><CanvasNodeHoverToolbar node={node} viewport={viewport} onKeep={no} onLeave={no} onInfo={no} onDecreaseFont={no} onIncreaseFont={no} onToggleDialog={no} onGenerateImage={no} onUpload={no} onDownload={no} onSaveAsset={no} onPaint={no} onMaskEdit={no} onCrop={no} onSplit={no} onUpscale={no} onSuperResolve={no} onAngle={no} onViewImage={no} onReversePrompt={no} onRetry={no} onToggleFreeResize={no} onDelete={no} /></App></ConfigProvider>); });
+            await act(async () => { root.render(<ConfigProvider virtual={false}><App><CanvasNodeHoverToolbar node={node} viewport={viewport} onKeep={no} onLeave={no} onInfo={no} onDecreaseFont={no} onIncreaseFont={no} onToggleDialog={no} onGenerateImage={no} onUpload={no} onDownload={no} onSaveAsset={no} onPaint={no} onMaskEdit={no} onCrop={no} onExtractSelection={no} onAddToAgent={no} onSplit={no} onUpscale={no} onSuperResolve={no} onAngle={no} onViewImage={no} onReversePrompt={no} onRetry={no} onToggleFreeResize={no} onDelete={no} /></App></ConfigProvider>); });
             const toolbar = host.querySelector('[data-node-toolbar="toolbar-name-gap"]') as HTMLElement; assert.ok(toolbar);
             assert.ok(toolbar.classList.contains("-translate-y-full"));
             const toolbarBottom = parseFloat(toolbar.style.top), titleTop = viewport.y + (node.position.y - 28) * k;
@@ -127,17 +127,17 @@ async function toolbarChecks() {
         }
         await act(async () => root.unmount()); host.remove();
     });
-    await check("清空快捷工具配置仍固定显示画笔/裁剪扩图/多宫格裁剪三个独立入口，点击分别转发正确节点", async () => {
+    await check("清空快捷工具仍固定显示画笔/裁剪扩图/多宫格裁剪/提取选区/添加Agent，点击分别转发正确节点", async () => {
         for (const settings of [[], { ids: [], showLabels: false }]) {
             localStorage.setItem(IMAGE_QUICK_TOOLS_STORAGE_KEY, JSON.stringify(settings));
             const host = document.createElement("div"); document.body.append(host); const root = createRoot(host), calls: string[] = [];
             const node: CanvasNodeData = { id: "local-image-tools", type: CanvasNodeType.Image, title: "商品主图", position: { x: 100, y: 100 }, width: 300, height: 225, metadata: { content: "data:image/png;base64,original" } };
             const record = (name: string) => (value: CanvasNodeData) => { assert.equal(value, node); calls.push(name); };
-            await act(async () => { root.render(<ConfigProvider virtual={false}><App><CanvasNodeHoverToolbar node={node} viewport={{ x: 0, y: 0, k: 1 }} onKeep={no} onLeave={no} onInfo={no} onDecreaseFont={no} onIncreaseFont={no} onToggleDialog={no} onGenerateImage={no} onUpload={no} onDownload={no} onSaveAsset={no} onPaint={record("paint")} onMaskEdit={no} onCrop={record("crop")} onSplit={record("split")} onUpscale={no} onSuperResolve={no} onAngle={no} onViewImage={no} onReversePrompt={no} onRetry={no} onToggleFreeResize={no} onDelete={no} /></App></ConfigProvider>); await tick(); });
+            await act(async () => { root.render(<ConfigProvider virtual={false}><App><CanvasNodeHoverToolbar node={node} viewport={{ x: 0, y: 0, k: 1 }} onKeep={no} onLeave={no} onInfo={no} onDecreaseFont={no} onIncreaseFont={no} onToggleDialog={no} onGenerateImage={no} onUpload={no} onDownload={no} onSaveAsset={no} onPaint={record("paint")} onMaskEdit={no} onCrop={record("crop")} onExtractSelection={record("extract")} onAddToAgent={record("agent")} onSplit={record("split")} onUpscale={no} onSuperResolve={no} onAngle={no} onViewImage={no} onReversePrompt={no} onRetry={no} onToggleFreeResize={no} onDelete={no} /></App></ConfigProvider>); await tick(); });
             const toolbar = host.querySelector('[data-node-toolbar="local-image-tools"]')!; assert.ok(toolbar);
-            assert.deepEqual([...toolbar.querySelectorAll("button")].slice(0, 3).map((element) => element.textContent), ["画笔", "裁剪/扩图", "多宫格裁剪"]); assert.equal(toolbar.querySelectorAll("button").length, 4);
-            for (const name of ["画笔", "裁剪/扩图", "多宫格裁剪"]) await click(labeled(toolbar, name));
-            assert.deepEqual(calls, ["paint", "crop", "split"]); assert.equal((globalThis as any).__paintNetworkCalls, 0);
+            assert.deepEqual([...toolbar.querySelectorAll("button")].slice(0, 5).map((element) => element.textContent), ["画笔", "裁剪/扩图", "多宫格裁剪", "提取选区", "添加到 Agent"]); assert.equal(toolbar.querySelectorAll("button").length, 6);
+            for (const name of ["画笔", "裁剪/扩图", "多宫格裁剪", "提取选区", "添加到 Agent"]) await click(labeled(toolbar, name));
+            assert.deepEqual(calls, ["paint", "crop", "split", "extract", "agent"]); assert.equal((globalThis as any).__paintNetworkCalls, 0);
             await act(async () => root.unmount()); host.remove();
         }
         localStorage.removeItem(IMAGE_QUICK_TOOLS_STORAGE_KEY);

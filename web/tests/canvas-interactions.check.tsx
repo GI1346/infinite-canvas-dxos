@@ -15,7 +15,7 @@ import { arrangeGrid } from "../src/lib/canvas/canvas-grid-layout";
 import { canvasDownloadMimeType, canvasDownloadName } from "../src/lib/canvas/canvas-download-name";
 import { TABLE_TYPE, CONCURRENT_TYPE, emptyTable } from "../src/lib/canvas/dxos-table";
 import { computeMediaSize, mediaRatioOptions, mediaScaleOptions } from "../src/lib/media-size";
-import { defaultConfig } from "../src/stores/use-config-store";
+import { createModelChannel, defaultConfig, useConfigStore } from "../src/stores/use-config-store";
 import { relayImageInput } from "../src/services/api/relay-tasks";
 import type { CanvasNodeData, ViewportTransform } from "../src/types/canvas";
 import type { CanvasPluginHost } from "../src/types/canvas-plugin";
@@ -150,6 +150,11 @@ async function gestures() {
 }
 
 async function workflows() {
+    // The shared UI/Agent workflow runner validates the exact saved channel and model.
+    // Keep all three offline capabilities in the same synthetic configuration as the host.
+    const capabilities = ["image", "text", "video"] as const;
+    const channels = capabilities.map((mode) => createModelChannel({ id: `${mode}-relay`, name: `offline-${mode}`, baseUrl: `https://${mode}.invalid`, apiKey: `synthetic-${mode}`, models: [{ name: "model", capability: mode }] }));
+    useConfigStore.setState({ config: { ...defaultConfig, channels, models: capabilities.map((mode) => `${mode}-relay::model`), model: "image-relay::model", imageModel: "image-relay::model", textModel: "text-relay::model", videoModel: "video-relay::model" } });
     const table = makeNode("table", TABLE_TYPE, { table: { ...emptyTable(), rows: [["翻译英文", "商品图"]] }, tableInputChannels: [{ id: "input-1" }] });
     const image = makeNode("reference", "image", { content: "https://example.test/reference.png", status: "success" });
     const concurrent = makeNode("batch", CONCURRENT_TYPE, { generationMode: "image", tableBatchConcurrency: 1 });
@@ -161,7 +166,7 @@ async function workflows() {
         updateNode: (id, patch) => { state = applyCanvasAgentOps(state, [{ type: "update_node", id, patch }]); render(); },
         updateMetadata: (id, patch) => { state = applyCanvasAgentOps(state, [{ type: "update_node", id, metadata: patch }]); render(); },
         applyOps: (ops) => { state = applyCanvasAgentOps(state, ops); render(); }, openPanel: no, closePanel: no,
-        ai: { listModels: (mode) => { models.push(mode || ""); return [{ value: `${mode}-relay:model`, label: `${mode} 测试模型` }]; }, defaultModel: (mode) => `${mode}-default`, generateImage: async (prompt, options) => { calls.push({ mode: "image", prompt, options }); return imageWork(options); }, generateText: async (prompt, options) => { calls.push({ mode: "text", prompt, options }); return { text: "English" }; }, generateVideo: async (prompt, options) => { calls.push({ mode: "video", prompt, options }); return { url: "https://example.test/output.mp4", mimeType: "video/mp4" }; } },
+        ai: { listModels: (mode) => { models.push(mode || ""); return [{ value: `${mode}-relay::model`, label: `${mode} 测试模型` }]; }, defaultModel: (mode) => `${mode}-relay::model`, generateImage: async (prompt, options) => { calls.push({ mode: "image", prompt, options }); return imageWork(options); }, generateText: async (prompt, options) => { calls.push({ mode: "text", prompt, options }); return { text: "English" }; }, generateVideo: async (prompt, options) => { calls.push({ mode: "video", prompt, options }); return { url: "https://example.test/output.mp4", mimeType: "video/mp4" }; } },
     };
     let viewport: ViewportTransform = { x: 0, y: 0, k: 1 };
     const canvasRef = createRef<HTMLDivElement>();
@@ -206,20 +211,20 @@ async function workflows() {
         await value(label(batchEl(), "生成分辨率"), "1k");
     });
     await test("模型、比例、分辨率、质量选择写入节点元数据", async () => {
-        await value(label(batchEl(), "模型与中转站"), "image-relay:model"); assert.equal(host.getNode(concurrent.id)!.metadata!.model, "image-relay:model");
+        await value(label(batchEl(), "模型与中转站"), "image-relay::model"); assert.equal(host.getNode(concurrent.id)!.metadata!.model, "image-relay::model");
         await value(label(batchEl(), "生成比例"), "16:9"); assert.equal(host.getNode(concurrent.id)!.metadata!.size, "1536x864");
         await value(label(batchEl(), "生成分辨率"), "4k"); assert.equal(host.getNode(concurrent.id)!.metadata!.size, "3840x2160");
         await value(label(batchEl(), "生成质量"), "high"); await value(label(batchEl(), "附加提示词"), "保持构图");
     });
     await test("并发运行传递所选图像模型/尺寸/质量/参考图，结果节点成功落图与连线", async () => {
         await fire(button(batchEl(), "▶ 运行"), mouse("click")); await act(async () => { await tick(); });
-        assert.equal(calls.length, 1); const call = calls[0]; assert.equal(call.mode, "image"); assert.equal(call.options.model, "image-relay:model"); assert.equal(call.options.size, "3840x2160"); assert.equal(call.options.quality, "high"); assert.deepEqual(call.options.references, [image.metadata!.content]); assert.ok(call.options.signal instanceof AbortSignal); assert.equal(call.options.count, 1); assert.ok(call.prompt.includes("翻译成英文")); assert.ok(call.prompt.includes("保持构图"));
+        assert.equal(calls.length, 1); const call = calls[0]; assert.equal(call.mode, "image"); assert.equal(call.options.model, "image-relay::model"); assert.equal(call.options.size, "3840x2160"); assert.equal(call.options.quality, "high"); assert.deepEqual(call.options.references, [image.metadata!.content]); assert.ok(call.options.signal instanceof AbortSignal); assert.equal(call.options.count, 1); assert.ok(call.prompt.includes("翻译成英文")); assert.ok(call.prompt.includes("保持构图"));
         const run = host.getNode(concurrent.id)!.metadata!.tableBatchRun!; assert.equal(run.state, "completed"); assert.equal(run.tasks[0].status, "success"); const output = host.getNode(run.tasks[0].outputIds[0])!; assert.equal(output.metadata!.status, "success"); assert.ok(state.connections.some((c) => c.fromNodeId === concurrent.id && c.toNodeId === output.id));
     });
     await test("切换文本/视频后按对应能力展示模型，视频时长与尺寸传入生成", async () => {
         await value(label(batchEl(), "生成类型"), "text"); assert.equal(host.getNode(concurrent.id)!.metadata!.model, undefined); assert.equal(batchEl().querySelector('[aria-label="生成比例"]'), null); assert.ok(models.includes("text"));
-        await value(label(batchEl(), "模型与中转站"), "text-relay:model"); await fire(button(batchEl(), "▶ 运行"), mouse("click")); await act(async () => { await tick(); }); assert.equal(calls.at(-1)!.options.model, "text-relay:model"); assert.equal(calls.at(-1)!.mode, "text");
-        await value(label(batchEl(), "生成类型"), "video"); await value(label(batchEl(), "模型与中转站"), "video-relay:model"); await value(label(batchEl(), "视频时长"), "8"); await value(label(batchEl(), "生成比例"), "9:16"); assert.equal(batchEl().querySelector('[aria-label="自定义生成尺寸"]'), null); await fire(button(batchEl(), "▶ 运行"), mouse("click")); await act(async () => { await tick(); }); assert.equal(calls.at(-1)!.mode, "video"); assert.equal(calls.at(-1)!.options.seconds, "8"); assert.equal(calls.at(-1)!.options.size, "2160x3840");
+        await value(label(batchEl(), "模型与中转站"), "text-relay::model"); await fire(button(batchEl(), "▶ 运行"), mouse("click")); await act(async () => { await tick(); }); assert.equal(calls.at(-1)!.options.model, "text-relay::model"); assert.equal(calls.at(-1)!.mode, "text");
+        await value(label(batchEl(), "生成类型"), "video"); await value(label(batchEl(), "模型与中转站"), "video-relay::model"); await value(label(batchEl(), "视频时长"), "8"); await value(label(batchEl(), "生成比例"), "9:16"); assert.equal(batchEl().querySelector('[aria-label="自定义生成尺寸"]'), null); await fire(button(batchEl(), "▶ 运行"), mouse("click")); await act(async () => { await tick(); }); assert.equal(calls.at(-1)!.mode, "video"); assert.equal(calls.at(-1)!.options.seconds, "8"); assert.equal(calls.at(-1)!.options.size, "2160x3840");
     });
     await test("运行时配置锁定、停止中断当前任务，重试未完成行可恢复成功", async () => {
         await value(label(batchEl(), "生成类型"), "image");

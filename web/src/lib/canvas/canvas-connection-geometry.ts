@@ -1,3 +1,4 @@
+import { LOCAL_FUSION_NODE_TYPE, FUSION_PATCH_PORT, fusionTargetAnchor } from "@/lib/canvas/canvas-fusion-ports";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
 
 export type ConnectionCurve = [Position, Position, Position, Position];
@@ -5,9 +6,9 @@ export function connectionCurve(connection: CanvasConnection, from: CanvasNodeDa
     const channels = to.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }];
     const port = Math.max(0, channels.findIndex((channel) => channel.id === connection.toPort));
     const start = { x: from.position.x + from.width, y: from.position.y + from.height / 2 };
-    const end = { x: to.position.x, y: to.position.y + to.height / 2 + (to.type === "dxos:table" ? (port - (channels.length - 1) / 2) * 56 : 0) };
+    const end = to.type === LOCAL_FUSION_NODE_TYPE ? fusionTargetAnchor(to, connection.toPort) : { x: to.position.x, y: to.position.y + to.height / 2 + (to.type === "dxos:table" ? (port - (channels.length - 1) / 2) * 56 : 0) };
     const bend = Math.max(Math.abs(end.x - start.x) * .5, 50);
-    return [start, { x: start.x + bend, y: start.y }, { x: end.x - bend, y: end.y }, end];
+    return [start, { x: start.x + bend, y: start.y }, { x: end.x + (to.type === LOCAL_FUSION_NODE_TYPE && connection.toPort === FUSION_PATCH_PORT ? bend : -bend), y: end.y }, end];
 }
 export const curvePath = (curve: ConnectionCurve) => `M ${curve[0].x} ${curve[0].y} C ${curve[1].x} ${curve[1].y}, ${curve[2].x} ${curve[2].y}, ${curve[3].x} ${curve[3].y}`;
 const mix = (a: Position, b: Position, t: number): Position => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });

@@ -1,4 +1,5 @@
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ViewportTransform } from "@/types/canvas";
+import { LOCAL_FUSION_NODE_TYPE, fusionConnectionPort, fusionTargetAnchor } from "@/lib/canvas/canvas-fusion-ports";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type Position, type ViewportTransform } from "@/types/canvas";
 
 export function nodeBounds(nodes: CanvasNodeData[]) {
     return nodes.reduce(
@@ -131,7 +132,8 @@ export function findContainingGroupId(node: CanvasNodeData, nodes: CanvasNodeDat
     return undefined;
 }
 
-export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle) {
+export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle, world?: Position) {
+    if (node.type === LOCAL_FUSION_NODE_TYPE && current.handleType === "source") return fusionTargetAnchor(node, world ? fusionConnectionPort(node, current, world, null) : undefined);
     return {
         x: current.handleType === "source" ? node.position.x : node.position.x + node.width,
         y: node.position.y + node.height / 2,
@@ -142,7 +144,7 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     const first = nodes.find((node) => node.id === firstNodeId);
     const second = nodes.find((node) => node.id === secondNodeId);
     if (!first || !second || first.id === second.id) return null;
-    if (first.type.startsWith("dxos:") || second.type.startsWith("dxos:")) {
+    if (first.type.startsWith("dxos:") || second.type.startsWith("dxos:") || first.type === LOCAL_FUSION_NODE_TYPE || second.type === LOCAL_FUSION_NODE_TYPE) {
         const from = firstHandleType === "source" ? first : second;
         const to = firstHandleType === "source" ? second : first;
         return to.type === CanvasNodeType.Group ? null : { fromNodeId: from.id, toNodeId: to.id };

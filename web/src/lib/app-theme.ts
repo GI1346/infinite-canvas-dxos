@@ -18,7 +18,7 @@ const neutral = {
         primary: "#fafafa",
         primaryHover: "#ffffff",
         primaryText: "#171717",
-        elevatedBg: "#1c1917",
+        elevatedBg: "#222222",
         itemHoverBg: "rgba(250, 250, 249, 0.08)",
         itemSelectedBg: "rgba(250, 250, 249, 0.12)",
         itemSelectedHoverBg: "rgba(250, 250, 249, 0.16)",
@@ -29,10 +29,10 @@ const neutral = {
 };
 
 export function getAntThemeConfig(dark: boolean): ThemeConfig {
-    const color = { ...neutral.light, ...(dark ? { elevatedBg: "#fbfaf7" } : {}) };
+    const color = neutral[dark ? "dark" : "light"];
 
     return {
-        algorithm: antdTheme.defaultAlgorithm,
+        algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
             colorPrimary: color.primary,
@@ -42,7 +42,8 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorLinkActive: color.primary,
             colorTextLightSolid: color.primaryText,
             colorBgElevated: color.elevatedBg,
-            colorBgLayout: dark ? "#f4f2ed" : "#ffffff",
+            colorBgLayout: dark ? "#161616" : "#ffffff",
+            ...(dark ? { colorBgContainer: "#222222", colorText: "#efefef", colorTextSecondary: "#a2a2a2", colorBorder: "#3a3a3a" } : {}),
             controlItemBgHover: color.itemHoverBg,
             controlItemBgActive: color.itemSelectedBg,
             controlItemBgActiveHover: color.itemSelectedHoverBg,

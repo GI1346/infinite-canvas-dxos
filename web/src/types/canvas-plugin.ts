@@ -40,6 +40,8 @@ export type CanvasNodeToolbarItem = {
 
 // Context injected while rendering each node; the primary interface between plugins and the canvas.
 export type CanvasNodeContext = {
+    // Live project identity for asynchronous node operations; older external hosts may omit it.
+    getProjectId?: () => string | undefined;
     node: CanvasNodeData;
     theme: CanvasTheme;
     scale: number;
@@ -75,6 +77,7 @@ export type PluginStorage = {
 
 // Node-independent host capabilities constructed by the canvas page and injected into the render chain.
 export type CanvasPluginHost = {
+    getProjectId?: () => string | undefined;
     getNode: (id: string) => CanvasNodeData | null;
     getNodes: () => CanvasNodeData[];
     getConnections: () => CanvasConnection[];

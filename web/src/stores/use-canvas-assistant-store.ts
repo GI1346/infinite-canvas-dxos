@@ -1,0 +1,220 @@
+import localforage from "localforage";
+import { nanoid } from "nanoid";
+import { create } from "zustand";
+
+import { buildAssistantSkillPrompt } from "@/lib/canvas/canvas-assistant-skills";
+import { getAssistantSkill, loadAssistantSkills } from "@/stores/use-canvas-assistant-skill-store";
+import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { assistantGraphSummary, assistantRunMode, assistantRunTargets, assistantSystemPrompt, executeAssistantTool, requestAssistantAction, type AssistantAction, type AssistantToolResult } from "@/services/api/canvas-assistant";
+import type { AiTextMessage } from "@/services/api/image";
+import { selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import type { CanvasGenerationMode, CanvasNodeData } from "@/types/canvas";
+
+export type CanvasAssistantContext = {
+    snapshot: CanvasAgentSnapshot;
+    getSnapshot: () => CanvasAgentSnapshot;
+    applyOps: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot;
+    runNode: (nodeId: string, mode?: CanvasGenerationMode, prompt?: string, signal?: AbortSignal) => Promise<CanvasNodeData | undefined>;
+};
+export type CanvasAssistantMessage = { id: string; role: "user" | "assistant" | "tool" | "error"; text: string; references?: string[]; models?: string[] };
+export type CanvasAssistantSession = { id: string; projectId: string; title: string; model: string; messages: CanvasAssistantMessage[]; transcript: AiTextMessage[]; references: string[]; models: string[]; turnModels?: string[]; skillId?: string; turnSkillPrompt?: string; draft: string; running: boolean; status: string; pending?: AssistantAction; updatedAt: number };
+type ProjectSessions = { sessions: CanvasAssistantSession[]; currentId: string };
+type CanvasAssistantStore = {
+    open: boolean; context: CanvasAssistantContext | null; sessions: CanvasAssistantSession[]; currentId: string; loading: boolean; storageError: string;
+    setOpen: (open: boolean) => void; setContext: (context: CanvasAssistantContext | null) => void; addReferences: (ids: string[]) => void;
+    removeReference: (id: string) => void; toggleModel: (id: string) => void; setDraft: (draft: string) => void; setModel: (model: string) => void; setSkill: (id?: string) => void;
+
+    createSession: () => void; selectSession: (id: string) => void; renameSession: (id: string, title: string) => void; deleteSession: (id: string) => void;
+    send: () => Promise<void>; confirm: (accepted: boolean) => Promise<void>; stop: () => void; clearHistory: () => Promise<void>;
+};
+const db = localforage.createInstance({ name: "infinite-canvas", storeName: "canvas_assistant" });
+const projects = new Map<string, ProjectSessions>();
+const controllers = new Map<string, AbortController>();
+const pendingReferences = new Map<string, string[]>();
+let storageEpoch = 0;
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function newSession(projectId: string): CanvasAssistantSession {
+    const config = useConfigStore.getState().config, models = selectableModelsByCapability(config, "text");
+    return { id: nanoid(), projectId, title: "新对话", model: models.includes(config.textModel) ? config.textModel : models[0] || "", messages: [], transcript: [], references: [], models: [], draft: "", running: false, status: "", updatedAt: Date.now() };
+}
+function projectOf(projectId: string) {
+    let project = projects.get(projectId);
+    if (!project) { const session = newSession(projectId); project = { sessions: [session], currentId: session.id }; projects.set(projectId, project); }
+    return project;
+}
+function persist(projectId: string) {
+    const data = projectOf(projectId);
+    // Credentials, picture bytes, context callbacks and active request state never enter this database.
+    const value = { sessions: data.sessions.map(({ running: _running, ...session }) => ({ ...session, running: false, status: session.pending ? "等待确认生成" : "" })), currentId: data.currentId };
+    writeQueue = writeQueue.catch(() => undefined).then(() => db.setItem(projectId, value)).catch((error) => { useCanvasAssistantStore.setState({ storageError: `Agent 历史保存失败：${error instanceof Error ? error.message : String(error)}` }); });
+}
+function publish(projectId: string) {
+    if (useCanvasAssistantStore.getState().context?.snapshot.projectId === projectId) useCanvasAssistantStore.setState({ ...projectOf(projectId) });
+}
+function patch(projectId: string, sessionId: string, update: (session: CanvasAssistantSession) => CanvasAssistantSession) {
+    const project = projects.get(projectId);
+    if (!project) return;
+    project.sessions = project.sessions.map((session) => session.id === sessionId ? { ...update(session), updatedAt: Date.now() } : session);
+    publish(projectId); persist(projectId);
+}
+function append(projectId: string, sessionId: string, role: CanvasAssistantMessage["role"], text: string, extras: Partial<CanvasAssistantMessage> = {}) {
+    patch(projectId, sessionId, (session) => ({ ...session, messages: [...session.messages, { id: nanoid(), role, text, ...extras }] }));
+}
+function active() {
+    const state = useCanvasAssistantStore.getState(), context = state.context;
+    if (!context) return null;
+    const project = projectOf(context.snapshot.projectId), session = project.sessions.find((item) => item.id === project.currentId);
+    return session ? { context, session, projectId: session.projectId } : null;
+}
+function expandReferences(context: CanvasAssistantContext, ids: string[]) {
+    const nodes = context.getSnapshot().nodes, result = new Set<string>();
+    const visit = (id: string) => { if (result.has(id)) return; const node = nodes.find((item) => item.id === id); if (!node) return; result.add(id); if (node.type === "group") nodes.filter((item) => item.metadata?.groupId === id).forEach((item) => visit(item.id)); };
+    ids.forEach(visit); return [...result];
+}
+function actionName(action: AssistantAction) {
+    return ({ read_canvas: "读取画布", read_assets: "查看素材", read_results: "读取运行结果", apply_workflow: "创建工作流", update_nodes: "更新节点参数", run_nodes: "等待确认生成", final: "完成" })[action.tool];
+}
+function toolMessage(action: AssistantAction, result: AssistantToolResult): AiTextMessage {
+    const text = `工具 ${action.tool} 返回：${JSON.stringify(result.value)}`;
+    return { role: "user", content: result.images?.length ? [{ type: "text", text }, ...result.images.flatMap((image): Exclude<AiTextMessage["content"], string> => [{ type: "text", text: `节点图片 ${image.nodeId}` }, { type: "image_url", image_url: { url: image.url } }])] : text };
+}
+function textOnly(message: AiTextMessage): AiTextMessage {
+    return typeof message.content === "string" ? message : { ...message, content: message.content.filter((part) => part.type === "text").map((part) => part.type === "text" ? part.text : "").join("\n") };
+}
+function assertProject(context: CanvasAssistantContext, projectId: string, signal: AbortSignal) {
+    if (signal.aborted) throw new DOMException("已停止", "AbortError");
+    if (useCanvasAssistantStore.getState().context?.snapshot.projectId !== projectId || context.getSnapshot().projectId !== projectId) throw new Error("当前画布已切换，Agent 已停止操作旧画布");
+}
+async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSession, transcript: AiTextMessage[], controller: AbortController) {
+    const { projectId, id } = initial, signal = controller.signal;
+    const seen = new Set<string>();
+    try {
+        while (!signal.aborted) {
+            assertProject(context, projectId, signal);
+            const session = projectOf(projectId).sessions.find((item) => item.id === id);
+            if (!session) return;
+            const config = useConfigStore.getState().config;
+            patch(projectId, id, (value) => ({ ...value, running: true, status: "思考中" }));
+            const action = await requestAssistantAction(config, session.model, [{ role: "system", content: assistantSystemPrompt(config, initial.turnModels || initial.models) + (initial.turnSkillPrompt || "") }, ...transcript], signal);
+            assertProject(context, projectId, signal);
+            const fingerprint = JSON.stringify({ action, graph: assistantGraphSummary(context.getSnapshot()) });
+            if (seen.has(fingerprint)) throw new Error("Agent 重复同一操作且画布没有变化，已停止。请调整要求或更换对话模型后继续。");
+            seen.add(fingerprint);
+            transcript = [...transcript, { role: "assistant", content: JSON.stringify(action) }];
+            patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly), status: actionName(action) }));
+            if (action.tool === "final") { append(projectId, id, "assistant", typeof action.args.message === "string" ? action.args.message : "已完成"); return; }
+            if (action.tool === "run_nodes") {
+                const targets = assistantRunTargets(action, context);
+                if (!targets.length) throw new Error("Agent 未指定可运行节点");
+                patch(projectId, id, (value) => ({ ...value, pending: action, running: false, status: "等待确认生成" }));
+                return;
+            }
+            let result: AssistantToolResult;
+            try { result = await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal); }
+            catch (error) { if (signal.aborted) throw error; result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+            assertProject(context, projectId, signal);
+            transcript = [...transcript, toolMessage(action, result)];
+            patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly) }));
+            append(projectId, id, "tool", `${actionName(action)}：${JSON.stringify(result.value)}`);
+        }
+    } catch (error) {
+        if (!signal.aborted) append(projectId, id, "error", error instanceof Error ? error.message : String(error));
+    } finally {
+        if (controllers.get(id) === controller) { controllers.delete(id); patch(projectId, id, (value) => ({ ...value, running: false, status: value.pending ? "等待确认生成" : "" })); }
+    }
+}
+
+export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) => ({
+    open: false, context: null, sessions: [], currentId: "", loading: false, storageError: "",
+    setOpen: (open) => set({ open }),
+    setContext: (context) => {
+        const previousId = get().context?.snapshot.projectId, projectId = context?.snapshot.projectId;
+        if (previousId === projectId) { set({ context }); return; }
+        if (previousId) { const previous = projectOf(previousId); for (const session of previous.sessions) { controllers.get(session.id)?.abort(); controllers.delete(session.id); } previous.sessions = previous.sessions.map((session) => ({ ...session, running: false, status: session.pending ? "等待确认生成" : "" })); persist(previousId); }
+        set({ context, sessions: [], currentId: "", loading: Boolean(context) });
+        if (!context || !projectId) return;
+        const finish = () => { if (get().context?.snapshot.projectId !== projectId) return; const pending = pendingReferences.get(projectId) || []; pendingReferences.delete(projectId); publish(projectId); set({ loading: false }); if (pending.length) get().addReferences(pending); };
+        if (projects.has(projectId)) { finish(); return; }
+        const epoch = storageEpoch;
+        void db.getItem<ProjectSessions>(projectId).then((saved) => {
+            if (epoch !== storageEpoch) return;
+            if (!projects.has(projectId) && saved && Array.isArray(saved.sessions) && saved.sessions.every((session) => session.projectId === projectId)) projects.set(projectId, { sessions: saved.sessions.map((session) => ({ ...session, running: false })), currentId: saved.currentId });
+            const data = projectOf(projectId); if (!data.sessions.length) { const session = newSession(projectId); data.sessions = [session]; data.currentId = session.id; }
+            if (!data.sessions.some((session) => session.id === data.currentId)) data.currentId = data.sessions[0].id;
+            finish();
+        }).catch((error) => { if (epoch !== storageEpoch || get().context?.snapshot.projectId !== projectId) return; set({ storageError: `Agent 历史读取失败：${String(error)}` }); finish(); });
+    },
+    addReferences: (ids) => {
+        const state = get(), context = state.context; if (!context) return;
+        const projectId = context.snapshot.projectId;
+        if (state.loading) { pendingReferences.set(projectId, [...new Set([...(pendingReferences.get(projectId) || []), ...ids])]); set({ open: true }); return; }
+        const value = active(); if (!value) return;
+        patch(projectId, value.session.id, (session) => ({ ...session, references: [...new Set([...session.references, ...expandReferences(context, ids)])] })); set({ open: true });
+    },
+    removeReference: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, references: session.references.filter((item) => item !== id) })); },
+    toggleModel: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, models: session.models.includes(id) ? session.models.filter((item) => item !== id) : [...session.models, id] })); },
+    setDraft: (draft) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, draft })); },
+    setModel: (model) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, model })); },
+    setSkill: (skillId) => { const value = active(); if (value && !get().loading && !value.session.running && !value.session.pending) patch(value.projectId, value.session.id, (session) => ({ ...session, skillId })); },
+    createSession: () => { const context = get().context; if (!context) return; const projectId = context.snapshot.projectId, project = projectOf(projectId), session = newSession(projectId); project.sessions = [session, ...project.sessions]; project.currentId = session.id; publish(projectId); persist(projectId); },
+    selectSession: (id) => { const value = active(); if (!value || !projectOf(value.projectId).sessions.some((session) => session.id === id)) return; projectOf(value.projectId).currentId = id; publish(value.projectId); persist(value.projectId); },
+    renameSession: (id, title) => { const value = active(); if (value && title.trim()) patch(value.projectId, id, (session) => ({ ...session, title: title.trim() })); },
+    deleteSession: (id) => { const value = active(); if (!value) return; controllers.get(id)?.abort(); controllers.delete(id); const project = projectOf(value.projectId); project.sessions = project.sessions.filter((session) => session.id !== id); if (!project.sessions.length) project.sessions = [newSession(value.projectId)]; if (project.currentId === id) project.currentId = project.sessions[0].id; publish(value.projectId); persist(value.projectId); },
+    send: async () => {
+        const value = active(); if (!value || get().loading || value.session.running || value.session.pending) return;
+        const { session, projectId, context } = value;
+        if (!session.draft.trim() && !session.references.length) return;
+        const controller = new AbortController(); controllers.set(session.id, controller);
+        // Lock this turn before asynchronous Skill loading, so double-clicks cannot submit twice.
+        patch(projectId, session.id, (item) => ({ ...item, running: true, status: "读取会话配置" }));
+        try {
+            await loadAssistantSkills();
+            assertProject(context, projectId, controller.signal);
+            const skill = getAssistantSkill(session.skillId);
+            if (session.skillId && !skill) throw new Error("当前会话的 Skill 已不存在，请重新选择或取消该 Skill");
+            const turnSkillPrompt = buildAssistantSkillPrompt(skill);
+            const text = session.draft.trim() || "请分析这些节点", references = [...session.references], models = [...session.models];
+            const user: AiTextMessage = { role: "user", content: `${text}\n本次引用节点ID：${JSON.stringify(references)}\n本次指定生成模型ID：${JSON.stringify(models)}\n当前画布：${JSON.stringify(assistantGraphSummary(context.getSnapshot()))}` };
+            let transcript = [...session.transcript, user];
+            patch(projectId, session.id, (item) => ({ ...item, running: true, draft: "", references: [], models: [], turnModels: models, turnSkillPrompt, title: item.messages.length ? item.title : text.split("\n")[0], transcript, pending: undefined, messages: [...item.messages, { id: nanoid(), role: "user", text, references, models }] }));
+            if (references.length) {
+                try { const result = await executeAssistantTool({ tool: "read_assets", args: { nodeIds: references } }, context, useConfigStore.getState().config, models, controller.signal); transcript = [...transcript, toolMessage({ tool: "read_assets", args: {} }, result)]; }
+                catch (error) { if (!controller.signal.aborted) append(projectId, session.id, "error", `读取引用失败：${error instanceof Error ? error.message : String(error)}`); }
+            }
+            await loop(context, { ...session, models, turnModels: models, turnSkillPrompt }, transcript, controller);
+        } catch (error) {
+            if (!controller.signal.aborted) append(projectId, session.id, "error", error instanceof Error ? error.message : String(error));
+        } finally {
+            if (controllers.get(session.id) === controller) { controllers.delete(session.id); patch(projectId, session.id, (item) => ({ ...item, running: false, status: item.pending ? "等待确认生成" : "" })); }
+        }
+    },
+    confirm: async (accepted) => {
+        const value = active(); if (!value?.session.pending || value.session.running) return;
+        const { session, context, projectId } = value, action = session.pending!;
+        const controller = new AbortController(); controllers.set(session.id, controller);
+        patch(projectId, session.id, (item) => ({ ...item, running: true, pending: undefined, status: accepted ? "正在生成" : "已取消本次生成" }));
+        let result: AssistantToolResult;
+        if (!accepted) result = { value: { cancelled: true, note: "用户取消生成，已经建好的节点和连线保留，不要重复请求运行同一批节点。" } };
+        else {
+            try {
+                const targets = assistantRunTargets(action, context), outcomes = [];
+                const runModes = targets.map(assistantRunMode); // Validate the whole batch before any paid operation can start.
+                for (const [index, node] of targets.entries()) {
+                    assertProject(context, projectId, controller.signal);
+                    const output = await context.runNode(node.id, runModes[index], node.metadata?.composerContent || node.metadata?.prompt || "", controller.signal);
+                    assertProject(context, projectId, controller.signal);
+                    const graph = context.getSnapshot();
+                    const current = output || graph.nodes.find((item) => item.id === node.id);
+                    outcomes.push({ id: node.id, exists: Boolean(current), status: current?.metadata?.status || "idle", error: current?.metadata?.errorDetails, images: current?.metadata?.images?.map((image) => ({ id: image.id, status: image.status, error: image.errorDetails })), hasOutput: Boolean(current?.metadata?.storageKey || current?.metadata?.content || current?.metadata?.images?.some((image) => image.status === "success")) });
+                }
+                result = { value: { outcomes, note: "请按真实结果回答，必要时调用 read_results 进一步查看" } };
+            } catch (error) { result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+        }
+        if (controller.signal.aborted) return;
+        append(projectId, session.id, "tool", `${accepted ? "生成结果" : "取消生成"}：${JSON.stringify(result.value)}`);
+        await loop(context, session, [...session.transcript, toolMessage(action, result)], controller);
+    },
+    stop: () => { const value = active(); if (!value) return; controllers.get(value.session.id)?.abort(); controllers.delete(value.session.id); patch(value.projectId, value.session.id, (session) => ({ ...session, running: false, pending: undefined, status: "Agent 已停止，已提交的生成任务与画布内容保留" })); },
+    clearHistory: async () => { storageEpoch += 1; for (const controller of controllers.values()) controller.abort(); controllers.clear(); projects.clear(); pendingReferences.clear(); await writeQueue.catch(() => undefined); await db.clear(); const context = get().context; set({ sessions: [], currentId: "", loading: false, storageError: "" }); if (context) { projectOf(context.snapshot.projectId); publish(context.snapshot.projectId); } },
+}));

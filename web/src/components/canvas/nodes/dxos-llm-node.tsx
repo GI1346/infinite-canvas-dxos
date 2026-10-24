@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { BrainCircuit } from "lucide-react";
 import { decodeChannelModel, useEffectiveConfig } from "@/stores/use-config-store";
-import { buildLlmOutputOps, buildLlmPrompt, collectLlmInputs, LLM_TYPE, llmTableSystemPrompt } from "@/lib/canvas/dxos-llm";
+import { collectLlmInputs, LLM_TYPE } from "@/lib/canvas/dxos-llm";
+import { isWorkflowNodeRunning, runWorkflowNode, stopWorkflowNode } from "@/lib/canvas/canvas-workflow-runner";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
 import { stopWorkflowControlDrag } from "@/components/canvas/workflow-node-interactions";
 
@@ -12,7 +13,8 @@ export function LlmContent({ ctx }: { ctx: CanvasNodeContext }) {
     const { node, theme } = ctx, meta = node.metadata || {}, config = useEffectiveConfig();
     const current = useRef(ctx); current.current = ctx;
     const controller = useRef<AbortController | null>(null), mounted = useRef(true);
-    const [running, setRunning] = useState(false), [error, setError] = useState("");
+    const [localRunning, setRunning] = useState(false), [error, setError] = useState("");
+    const running = localRunning || (meta.status === "loading" && isWorkflowNodeRunning(node.id));
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); }; }, [node.id]);
     const mode = meta.llmOutputMode === "list" ? "list" : "text";
     const models = ctx.ai.listModels("text"), model = meta.model ?? ctx.ai.defaultModel("text"), decoded = decodeChannelModel(model);
@@ -24,35 +26,14 @@ export function LlmContent({ ctx }: { ctx: CanvasNodeContext }) {
     catch (reason) { summary = reason instanceof Error ? reason.message : String(reason); }
 
     const run = async () => {
-        if (controller.current) return;
-        const host = current.current, source = host.getNode(node.id);
-        if (!source) return;
+        if (controller.current || isWorkflowNodeRunning(node.id)) return;
         const abort = new AbortController(); controller.current = abort; setRunning(true); setError("");
-        const active = () => mounted.current && controller.current === abort && !abort.signal.aborted && Boolean(current.current.getNode(node.id));
         try {
-            if (!decoded || decoded.channelId !== channelId || !config.channels.some((channel) => channel.id === channelId) || !channelModels.some((option) => option.value === model)) throw new Error("请选择当前平台下的文本模型；缺失平台或模型时不会回退到其他渠道");
-            const channel = config.channels.find((entry) => entry.id === channelId)!;
-            if (!channel.apiKey.trim()) throw new Error("请在配置中填写“" + channel.name + "”的独立 API Key");
-            const inputs = collectLlmInputs(source, host.getNodes(), host.getConnections());
-            const prompt = buildLlmPrompt(inputs, source.metadata?.prompt);
-            if (!prompt && !inputs.references.length) throw new Error("请连接图片或文本，或填写分析提示词");
-            host.updateMetadata({ status: "loading", errorDetails: undefined });
-            const result = await host.ai.generateText(prompt || "请分析输入图片。", { model, references: inputs.references, signal: abort.signal, ...(mode === "list" ? { system: llmTableSystemPrompt } : {}) });
-            if (!active()) return;
-            if (!result.text.trim()) throw new Error("模型未返回分析内容");
-            const latest = current.current, latestNode = latest.getNode(node.id)!;
-            const output = buildLlmOutputOps(latestNode, mode, result.text, inputs, latest.getNodes(), latest.getConnections());
-            latest.applyOps(output.ops);
-            latest.updateMetadata({ content: result.text, status: "success", errorDetails: undefined, llmOutputNodeId: output.outputId });
-        } catch (reason) {
-            if (!mounted.current || controller.current !== abort || !current.current.getNode(node.id)) return;
-            if (abort.signal.aborted) current.current.updateMetadata({ status: "idle", errorDetails: undefined });
-            else { const message = reason instanceof Error ? reason.message : String(reason); setError(message); current.current.updateMetadata({ status: "error", errorDetails: message }); }
-        } finally {
-            if (controller.current === abort) { controller.current = null; if (mounted.current) setRunning(false); }
-        }
+            await runWorkflowNode(node.id, { getNode: (id) => current.current.getNode(id), getNodes: () => current.current.getNodes(), getConnections: () => current.current.getConnections(), applyOps: (ops) => current.current.applyOps(ops), ai: current.current.ai, getConfig: () => config, isActive: () => mounted.current }, { signal: abort.signal });
+        } catch (reason) { if (mounted.current && controller.current === abort && !abort.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason)); }
+        finally { if (controller.current === abort) { controller.current = null; if (mounted.current) setRunning(false); } }
     };
-    const cancel = () => { controller.current?.abort(); controller.current = null; setRunning(false); if (current.current.getNode(node.id)) current.current.updateMetadata({ status: "idle", errorDetails: undefined }); };
+    const cancel = () => { controller.current?.abort(); stopWorkflowNode(node.id); controller.current = null; setRunning(false); if (current.current.getNode(node.id)) current.current.updateMetadata({ status: "idle", errorDetails: undefined }); };
     return <div className="flex h-full w-full flex-col gap-3 p-4 text-xs" style={{ background: theme.node.panel, color: theme.node.text }} onMouseDown={stopWorkflowControlDrag} onPointerDown={stop} onKeyDown={stop}>
         <strong className="cursor-grab" data-node-drag-handle>LLM 多模态分析</strong>
         <div className="grid grid-cols-2 gap-2">

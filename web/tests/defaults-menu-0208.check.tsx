@@ -19,17 +19,17 @@ const no = () => {}, host = document.createElement("div"); document.body.append(
 const root = createRoot(host);
 const fire = async (target: EventTarget, event: Event) => act(async () => { target.dispatchEvent(event); });
 const click = (target: EventTarget) => fire(target, new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-const labels = ["文本", "图片", "多维表格", "LLM 多模态分析", "生成配置", "组", "视频", "并发生成", "音频"];
+const labels = ["文本", "图片", "多维表格", "LLM 多模态分析", "融合节点", "视频", "并发生成", "音频"];
 
 async function main() {
     await i18n.changeLanguage("zh-CN");
     const script = readFileSync("index.html", "utf8").match(/<script>([\s\S]*?)<\/script>/)![1];
     new Function(script)();
-    assert.equal(document.documentElement.classList.contains("warm"), false, "pre-React first paint is pure white");
+    assert.equal(document.documentElement.classList.contains("dark"), false, "pre-React first paint is pure white");
     localStorage.setItem("infinite-canvas:theme_store", JSON.stringify({ state: { theme: "dark" } }));
     new Function(script)();
-    assert.equal(document.documentElement.classList.contains("warm"), true, "pre-React script retains saved warm choice");
-    localStorage.removeItem("infinite-canvas:theme_store"); document.documentElement.classList.remove("warm");
+    assert.equal(document.documentElement.classList.contains("dark"), true, "pre-React script retains saved dark choice");
+    localStorage.removeItem("infinite-canvas:theme_store"); document.documentElement.classList.remove("dark");
     assert.equal(useThemeStore.getState().theme, "light");
     assert.equal(canvasThemes[useThemeStore.getState().theme].canvas.background, "#ffffff");
     assert.equal(defaultConfig.canvasImageCount, "1");
@@ -76,7 +76,7 @@ async function main() {
     await act(async () => root.render(<CanvasToolbar selectedCount={0} canvasTool="select" canUndo={false} canRedo={false} backgroundMode="lines" showImageInfo={false} onAddImage={no} onAddVideo={() => created.push("video")} onAddAudio={() => created.push("audio")} onAddText={no} onAddConfig={no} onAddGroup={no} onAddExtensionNode={(type) => created.push(type)} onUndo={no} onRedo={no} onUpload={no} onDelete={no} onClear={no} onCanvasToolChange={no} onBackgroundModeChange={no} onShowImageInfoChange={no} onFocusSelected={no} />));
     const nodeButtons = [...host.querySelectorAll("[data-canvas-bottom-toolbar] button")].filter(button => labels.includes(button.getAttribute("aria-label") || ""));
     assert.deepEqual(nodeButtons.map(button => button.getAttribute("aria-label")), labels);
-    await click(nodeButtons[2]); await click(nodeButtons[3]); await click(nodeButtons[6]); await click(nodeButtons[8]);
+    await click(nodeButtons[2]); await click(nodeButtons[3]); await click(nodeButtons[5]); await click(nodeButtons[7]);
     assert.deepEqual(created, ["dxos:table", "dxos:llm", "video", "audio"]);
     console.log("PASS toolbar matches menu order and table/LLM/video/audio actions work.");
 

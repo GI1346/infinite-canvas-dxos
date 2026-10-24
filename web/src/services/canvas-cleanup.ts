@@ -6,7 +6,7 @@ import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const imageStores = ["image_files", "image_previews"];
 const logStores = ["image_generation_logs", "video_generation_logs", "relay_tasks"];
-const allowedStores = [...imageStores, ...logStores];
+const allowedStores = [...imageStores, ...logStores, "canvas_assistant"];
 const canvasKey = "infinite-canvas:canvas_store", assetKey = "infinite-canvas:asset_store";
 type RecordEntry = { store: string; key: string; value: unknown };
 type Backup = { format: "canvas-cleanup/v1"; createdAt: string; projects: CanvasProject[]; assets: Asset[]; records: RecordEntry[] };
@@ -40,11 +40,13 @@ export async function prepareCleanup(projectId: string, options: CleanupOptions,
     const selected = new Set(affected.map((p) => p.id));
     const nextProjects = projects.map((p) => selected.has(p.id) ? cleanProject(p, options) : p);
     const nextAssets = cleanAssets(assets, options);
+    const assistantRecords = options.history ? (await recordsIn(["canvas_assistant"])).filter((record) => options.allProjects || selected.has(record.key)) : [];
     const logs = await recordsIn(logStores);
     // Retain blobs referenced by untouched canvases, assets and retained workbench records.
     const retained = imageKeys({ projects: nextProjects, assets: nextAssets, logs: options.logs ? [] : logs });
     const records = options.images ? (await recordsIn(imageStores)).filter((r) => !retained.has(r.key)) : [];
     if (options.logs) records.push(...logs);
+    records.push(...assistantRecords);
     const backup = createBackup ? await encodeBackup({ format: "canvas-cleanup/v1", createdAt: new Date().toISOString(), projects: affected, assets: options.images && options.assets ? assets.filter((a) => a.kind === "image") : [], records }) : new Blob();
     return {
         backup,

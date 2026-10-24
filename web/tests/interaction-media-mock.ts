@@ -4,3 +4,6 @@ export async function uploadMediaFile(url: string) { return { url, storageKey: "
 export function previewUrlFor() { return undefined; }
 export function subscribeImagePreviews() { return () => {}; }
 export function getImagePreviewRevision() { return 0; }
+
+export async function getImageBlob(_key: string): Promise<Blob | null> { return null; }
+export async function fetchImageBlob(url: string): Promise<Blob> { return (await fetch(url)).blob(); }

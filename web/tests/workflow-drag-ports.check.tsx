@@ -127,7 +127,8 @@ async function main() {
             const source = readFileSync("src/pages/canvas/project.tsx", "utf8");
             assert.equal(source.includes("lastConnectionPointer"), false);
             assert.ok(source.includes("connectNodes(currentConnection, dropTarget.nodeId, event.clientX, event.clientY)"));
-            assert.ok(source.includes("tableConnectionPort(target, current, screenToCanvas(clientX, clientY), document.elementFromPoint(clientX, clientY))"));
+            assert.ok(source.includes("tableConnectionPort(target, current, world, pointedElement)"));
+            assert.ok(source.includes("const world = screenToCanvas(clientX, clientY)"));
             assert.ok(source.includes("const curve = connectionCurve(connection, from, to), xs = curve.map"));
         });
         await test("项目开始切线前取消正在执行的聚焦动画，避免手势中viewport漂移", async () => {

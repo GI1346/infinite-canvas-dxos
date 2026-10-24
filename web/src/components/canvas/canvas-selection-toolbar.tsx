@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Download, Group, Ungroup } from "lucide-react";
+import { Bot, Download, Group, Ungroup } from "lucide-react";
 import { Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -20,6 +20,7 @@ export function CanvasSelectionToolbar({
     onUngroup,
     onGrid,
     onDownload,
+    onAddToAgent,
     downloading = false,
 }: {
     nodes: CanvasNodeData[];
@@ -31,6 +32,7 @@ export function CanvasSelectionToolbar({
     onUngroup: () => void;
     onGrid: () => void;
     onDownload?: () => void;
+    onAddToAgent: () => void;
     downloading?: boolean;
 }) {
     const { t } = useTranslation();
@@ -65,10 +67,11 @@ export function CanvasSelectionToolbar({
             {showActions ? (
                 <div
                     className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
-                    style={{ left: left + width / 2, top: top - 8 }}
+                    style={{ left: left + width / 2, top: top - 8, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                 >
+                    <SelectionAction title="添加到 Agent" label="添加到 Agent" icon={<Bot className="size-4" />} onClick={onAddToAgent} />
                     <SelectionAction title="宫格布局" label="宫格布局" icon={<Group className="size-4" />} onClick={onGrid} />
                     {onDownload && nodes.some((node) => node.type === "image" || node.type === "group") ? <SelectionAction title="批量下载图片（选择目录）" label={downloading ? "打包中…" : "批量下载"} icon={<Download className="size-4" />} onClick={onDownload} disabled={downloading} /> : null}
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
@@ -83,7 +86,7 @@ function SelectionAction({ title, label, icon, onClick, disabled }: { title: str
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
             <button type="button" className="group relative flex h-12 items-center whitespace-nowrap px-1.5 disabled:opacity-40" onClick={onClick} aria-label={title} disabled={disabled}>
-                <span className="flex h-9 items-center gap-2 rounded-lg px-2.5 transition group-hover:bg-[#f0f0f1]">
+                <span className="flex h-9 items-center gap-2 rounded-lg px-2.5 transition group-hover:bg-black/5 dark:group-hover:bg-white/10">
                     {icon}
                     <span>{label}</span>
                 </span>

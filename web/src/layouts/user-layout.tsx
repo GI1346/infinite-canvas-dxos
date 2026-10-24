@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { AgentPanel } from "@/components/agent/agent-panel";
+import { CanvasAssistantDock } from "@/components/agent/canvas-assistant-dock";
 import { AppTopNav } from "@/components/layout/app-top-nav";
 
 export default function UserLayout({ children }: { children: ReactNode }) {
@@ -10,7 +10,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 <AppTopNav />
                 <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
             </div>
-            <AgentPanel />
+            <CanvasAssistantDock />
         </div>
     );
 }

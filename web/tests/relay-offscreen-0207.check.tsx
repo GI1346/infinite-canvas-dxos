@@ -7,7 +7,7 @@ import { canvasThemes } from "../src/lib/canvas-theme";
 import { applyCanvasAgentOps, type CanvasAgentSnapshot } from "../src/lib/canvas/canvas-agent-ops";
 import { isCanvasNodeVisible } from "../src/lib/canvas/canvas-visibility";
 import { CONCURRENT_TYPE, TABLE_TYPE, emptyTable, runningTableBatches } from "../src/lib/canvas/dxos-table";
-import { createModelChannel, defaultConfig, RELAY_IMAGE_URL, RELAY_TASK_URL } from "../src/stores/use-config-store";
+import { createModelChannel, defaultConfig, useConfigStore, RELAY_IMAGE_URL, RELAY_TASK_URL } from "../src/stores/use-config-store";
 import { relayTasks, requestRelayImage } from "../src/services/api/relay-tasks";
 import type { CanvasNodeContext } from "../src/types/canvas-plugin";
 import type { CanvasNodeData } from "../src/types/canvas";
@@ -21,6 +21,7 @@ const config = { ...defaultConfig, channels: [channel], model: "offline-image::s
 const node = (id: string, type: string, metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({ id, type, title: id, position: { x: 40, y: 80 }, width: 400, height: 600, metadata });
 
 async function verify(resolution: "2k" | "4k") {
+    useConfigStore.setState({ config });
     const batch = node("batch", CONCURRENT_TYPE, { imageAspectRatio: "auto", imageResolution: resolution, size: "auto", model: config.model, tableBatchConcurrency: 2 });
     let state: CanvasAgentSnapshot = { projectId: "offline", title: "offline", nodes: [node("table", TABLE_TYPE, { table: { ...emptyTable(), rows: [["第一行"], ["第二行"]] } }), batch], connections: [{ id: "input", fromNodeId: "table", toNodeId: batch.id }], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } };
     let render = () => {}, moveOffscreen = () => {}, posts = 0;

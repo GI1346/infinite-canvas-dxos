@@ -1,3 +1,4 @@
+import { LOCAL_FUSION_NODE_TYPE, FUSION_PATCH_PORT, fusionConnectionPort, fusionTargetAnchor } from "@/lib/canvas/canvas-fusion-ports";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -55,25 +56,33 @@ export function ConnectionPath({
     );
 }
 
+export function connectionDragNodeIds(handle: ConnectionHandle) {
+    return handle.handleType === "source" && handle.sourceNodeIds?.length ? handle.sourceNodeIds : [handle.nodeId];
+}
+
 export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { node?: CanvasNodeData; handle: ConnectionHandle; mouseWorld: Position; target?: CanvasNodeData }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (!node) return null;
 
     const startX = handle.handleType === "source" ? node.position.x + node.width : mouseWorld.x;
     const startY = handle.handleType === "source" ? node.position.y + node.height / 2 : mouseWorld.y;
-    const endX = handle.handleType === "source" ? mouseWorld.x : node.position.x;
+    const ownTarget = node.type === LOCAL_FUSION_NODE_TYPE ? fusionTargetAnchor(node, handle.portId) : { x: node.position.x, y: node.position.y + node.height / 2 };
+    const endX = handle.handleType === "source" ? mouseWorld.x : ownTarget.x;
     const channels = node.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }];
     const portOffset = node.type === "dxos:table" && handle.portId ? (Math.max(0, channels.findIndex((channel) => channel.id === handle.portId)) - (channels.length - 1) / 2) * 56 : 0;
-    const endY = handle.handleType === "source" ? mouseWorld.y : node.position.y + node.height / 2 + portOffset;
+    const endY = handle.handleType === "source" ? mouseWorld.y : ownTarget.y + portOffset;
     const snappedStartX = handle.handleType === "target" && target ? target.position.x + target.width : startX;
     const snappedStartY = handle.handleType === "target" && target ? target.position.y + target.height / 2 : startY;
-    const snappedEndX = handle.handleType === "source" && target ? target.position.x : endX;
+    const fusionPort = target ? fusionConnectionPort(target, handle, mouseWorld, null) : undefined;
+    const targetAnchor = target?.type === LOCAL_FUSION_NODE_TYPE ? fusionTargetAnchor(target, fusionPort) : undefined;
+    const snappedEndX = handle.handleType === "source" && target ? targetAnchor?.x ?? target.position.x : endX;
     const targetChannels = target?.metadata?.tableInputChannels || [{ id: "input-1" }, { id: "input-2" }];
     const targetPort = target ? tableConnectionPort(target, handle, mouseWorld, null) : undefined;
     const targetOffset = target?.type === "dxos:table" ? (Math.max(0, targetChannels.findIndex((channel) => channel.id === targetPort)) - (targetChannels.length - 1) / 2) * 56 : 0;
-    const snappedEndY = handle.handleType === "source" && target ? target.position.y + target.height / 2 + targetOffset : endY;
+    const snappedEndY = handle.handleType === "source" && target ? targetAnchor?.y ?? target.position.y + target.height / 2 + targetOffset : endY;
     const distance = Math.abs(snappedEndX - snappedStartX);
-    const pathD = `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX - distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
+    const patchTarget = handle.handleType === "source" ? target?.type === LOCAL_FUSION_NODE_TYPE && fusionPort === FUSION_PATCH_PORT : node.type === LOCAL_FUSION_NODE_TYPE && handle.portId === FUSION_PATCH_PORT;
+    const pathD = `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX + (patchTarget ? 1 : -1) * distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
 
-    return <path d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" />;
+    return <path data-connection-preview={node.id} d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" style={{ pointerEvents: "none" }} />;
 }

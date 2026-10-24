@@ -1,15 +1,16 @@
+import { isWorkflowNodeRunning, runWorkflowNode, stopWorkflowNode } from "@/lib/canvas/canvas-workflow-runner";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Layers, Table2 } from "lucide-react";
 import { nanoid } from "nanoid";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
-import type { CanvasNodeMetadata } from "@/types/canvas";
+
 import { stopWorkflowControlDrag } from "@/components/canvas/workflow-node-interactions";
-import { TABLE_TYPE, CONCURRENT_TYPE, channelsFor, channelItems, itemAt, emptyTable, readTable, tableRows, generationRows, selectedGenerationRows, deleteTableRow, runRowPool, type DxTable, type DxBatchRun } from "@/lib/canvas/dxos-table";
+import { TABLE_TYPE, CONCURRENT_TYPE, channelsFor, channelItems, itemAt, emptyTable, readTable, tableRows, generationRows, selectedGenerationRows, deleteTableRow, type DxTable } from "@/lib/canvas/dxos-table";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions } from "@/lib/media-size";
-import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
-import { uploadImage } from "@/services/image-storage";
-import { uploadMediaFile } from "@/services/file-storage";
-import { runningTableBatches } from "@/lib/canvas/dxos-table";
+
+
+
+
 import { useEffectiveConfig } from "@/stores/use-config-store";
 
 const button = "rounded px-2 py-1 text-xs hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40";
@@ -74,52 +75,20 @@ function ConcurrentContent({ ctx }: { ctx: CanvasNodeContext }) {
     const { node, theme } = ctx, meta = node.metadata || {}, rows = generationRows(node, ctx.getNodes(), ctx.getConnections());
     const current = useRef(ctx); current.current = ctx;
     const controller = useRef<AbortController | null>(null);
-    const [running, setRunning] = useState(false), [error, setError] = useState("");
-    useEffect(() => () => { controller.current?.abort(); runningTableBatches.delete(node.id); }, [node.id]);
+    const mounted = useRef(true);
+    const [localRunning, setRunning] = useState(false), [error, setError] = useState("");
+    const running = localRunning || (meta.status === "loading" && isWorkflowNodeRunning(node.id));
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); }; }, [node.id]);
     const mode = meta.generationMode === "text" || meta.generationMode === "video" ? meta.generationMode : "image";
     const size = meta.size || (mode === "image" ? config.size : "auto");
     const input: CSSProperties = { background: theme.node.panel, color: theme.node.text, border: `1px solid ${theme.node.stroke}`, borderRadius: 6, padding: 6 };
     const run = async (retry = false) => {
-        if (controller.current) return;
-        const chosen = selectedGenerationRows(node, rows).filter((r) => !retry || meta.tableBatchRun?.tasks.some((t) => t.rowNumber === r.rowNumber && (t.status === "error" || t.status === "stopped" || t.status === "queued" || t.status === "running")));
-        if (!chosen.length) { setError("没有可运行的行，请连接表格并检查起始行或独立选择"); return; }
-        const abort = new AbortController(); controller.current = abort; runningTableBatches.add(node.id); setRunning(true); setError("");
-        const state: DxBatchRun = { id: nanoid(), state: "running", tasks: chosen.map((r) => ({ rowNumber: r.rowNumber, status: "queued", outputIds: [] })) };
-        const publish = () => { if (current.current.getNode(node.id)) current.current.applyOps([{ type: "update_node", id: node.id, metadata: { tableBatchRun: structuredClone(state) } }]); else abort.abort(); };
-        publish();
-        const group = nanoid(), origin = { x: node.position.x + node.width + 100, y: node.position.y };
-        ctx.applyOps([{ type: "add_node", id: group, nodeType: "group", title: "批量生成结果", position: { x: origin.x - 20, y: origin.y - 40 }, width: 380, height: chosen.length * 320 + 60 }]);
-        const ai = ctx.ai, model = meta.model || ai.defaultModel(mode);
+        if (controller.current || isWorkflowNodeRunning(node.id)) return;
+        const abort = new AbortController(); controller.current = abort; setRunning(true); setError("");
         try {
-            await runRowPool(chosen, Math.max(1, meta.tableBatchConcurrency || 1), abort.signal, async (row) => {
-                const task = state.tasks.find((t) => t.rowNumber === row.rowNumber)!;
-                const id = nanoid(); task.status = "running"; task.outputIds = [id]; publish();
-                const position = { x: origin.x, y: origin.y + chosen.findIndex((r) => r.rowNumber === row.rowNumber) * 320 };
-                ctx.applyOps([{ type: "add_node", id, nodeType: mode, title: `第 ${row.rowNumber} 行`, position, width: 300, height: 280, metadata: { groupId: group, status: "loading" } }, { type: "connect_nodes", fromNodeId: node.id, toNodeId: id }]);
-                try {
-                    if (row.media.some((m) => m.mediaType !== "image")) throw new Error("此批量入口当前只接收图片参考；视频或音频素材请使用画布原生对应节点");
-                    const prompt = [row.text, meta.prompt].filter(Boolean).join("\n"), references = row.media.map((m) => m.url);
-                    let output: CanvasNodeMetadata;
-                    if (mode === "image") {
-                        const result = await ai.generateImage(prompt, { model, references, count: 1, size: meta.imageAspectRatio === "auto" ? "auto" : meta.size, resolution: meta.imageResolution, quality: meta.quality, signal: abort.signal });
-                        if (!result.images.length) throw new Error("中转站未返回图片");
-                        output = imageMetadata(await uploadImage(result.images[0], { signal: abort.signal }));
-                    } else if (mode === "video") {
-                        const result = await ai.generateVideo(prompt, { model, references, size: meta.size, seconds: meta.seconds, signal: abort.signal });
-                        output = videoMetadata(await uploadMediaFile(result.url, "video"));
-                    } else { output = { status: "success", content: (await ai.generateText(prompt, { model, references, signal: abort.signal })).text }; }
-                    if (abort.signal.aborted) throw new DOMException("已停止", "AbortError");
-                    // Deleting a result while it is running must not recreate it.
-                    ctx.applyOps([{ type: "update_node", id, metadata: { ...output, prompt, model } }]); task.status = "success";
-                } catch (e) {
-                    task.status = abort.signal.aborted ? "stopped" : "error"; task.error = e instanceof Error ? e.message : String(e);
-                    ctx.applyOps([{ type: "update_node", id, metadata: { status: "error", errorDetails: task.error } }]);
-                } finally { publish(); }
-            });
-        } finally {
-            state.tasks.forEach((t) => { if (t.status === "queued" || t.status === "running") t.status = "stopped"; });
-            state.state = abort.signal.aborted ? "stopped" : "completed"; publish(); controller.current = null; runningTableBatches.delete(node.id); setRunning(false);
-        }
+            await runWorkflowNode(node.id, { getNode: (id) => current.current.getNode(id), getNodes: () => current.current.getNodes(), getConnections: () => current.current.getConnections(), applyOps: (ops) => current.current.applyOps(ops), ai: current.current.ai, getConfig: () => config, isActive: () => mounted.current }, { signal: abort.signal, retry });
+        } catch (reason) { if (mounted.current && controller.current === abort && !abort.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason)); }
+        finally { if (controller.current === abort) { controller.current = null; if (mounted.current) setRunning(false); } }
     };
     return <div className="flex h-full flex-col gap-3 p-4 text-xs" style={{ background: theme.node.panel, color: theme.node.text }} onMouseDown={stopWorkflowControlDrag} onPointerDown={stop} onKeyDown={stop}>
         <div className="flex items-center justify-between"><strong className="cursor-grab" data-node-drag-handle>生成输入 · {rows.length} 行</strong><select aria-label="生成类型" disabled={running} style={input} value={mode} onChange={(e) => ctx.updateMetadata({ generationMode: e.target.value as "image" | "video" | "text", model: undefined })}><option value="image">图像生成</option><option value="video">视频生成</option><option value="text">文本生成</option></select></div>
@@ -135,8 +104,8 @@ function ConcurrentContent({ ctx }: { ctx: CanvasNodeContext }) {
         })}</div>
         <div className="flex flex-wrap items-center gap-2"><label>并发数 <input aria-label="并发数" disabled={running} type="number" min={1} className="w-14" style={input} value={meta.tableBatchConcurrency || 1} onChange={(e) => ctx.updateMetadata({ tableBatchConcurrency: Math.max(1, Number(e.target.value) || 1) })} /></label><label>起始行 <input aria-label="起始行" type="number" min={1} disabled={running || meta.tableBatchManualSelection} className="w-14" style={input} value={meta.tableBatchStartRow || 1} onChange={(e) => ctx.updateMetadata({ tableBatchStartRow: Math.max(1, Number(e.target.value) || 1) })} /></label><label><input type="checkbox" disabled={running} checked={Boolean(meta.tableBatchManualSelection)} onChange={(e) => ctx.updateMetadata({ tableBatchManualSelection: e.target.checked })} /> 独立选择</label></div>
         <textarea aria-label="附加提示词" disabled={running} rows={2} style={input} placeholder="附加提示词（可空）" value={meta.prompt || ""} onChange={(e) => ctx.updateMetadata({ prompt: e.target.value })} />
-        {error && <p role="alert">{error}</p>}
-        <div className="flex justify-end gap-2"><button className={button} disabled={running || !meta.tableBatchRun} onClick={() => void run(true)}>重试未完成行</button>{running ? <button className={button} onClick={() => controller.current?.abort()}>停止</button> : <button className={button} onClick={() => void run()}>▶ 运行 {selectedGenerationRows(node, rows).length} 行</button>}</div>
+        {(error || meta.errorDetails) && <p role="alert">{error || meta.errorDetails}</p>}
+        <div className="flex justify-end gap-2"><button className={button} disabled={running || !meta.tableBatchRun} onClick={() => void run(true)}>重试未完成行</button>{running ? <button className={button} onClick={() => { controller.current?.abort(); stopWorkflowNode(node.id); controller.current = null; setRunning(false); }}>停止</button> : <button className={button} onClick={() => void run()}>▶ 运行 {selectedGenerationRows(node, rows).length} 行</button>}</div>
     </div>;
 }
 

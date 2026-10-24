@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
+import { Bot, Scan, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -29,6 +29,8 @@ type CanvasNodeHoverToolbarProps = {
     onPaint: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
+    onExtractSelection: (node: CanvasNodeData) => void;
+    onAddToAgent: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
     onSuperResolve: (node: CanvasNodeData) => void;
@@ -71,6 +73,8 @@ export function CanvasNodeHoverToolbar({
     onPaint,
     onMaskEdit,
     onCrop,
+    onExtractSelection,
+    onAddToAgent,
     onSplit,
     onUpscale,
     onSuperResolve,
@@ -146,6 +150,7 @@ export function CanvasNodeHoverToolbar({
     }
 
     const baseToolbarTools: ToolbarTool[] = [
+        { id: "addToAgent", title: "添加到 Agent", label: "添加到 Agent", icon: <Bot className="size-4" />, onClick: () => onAddToAgent(node) },
         { id: "info", title: t("canvas.nodeToolbar.infoTitle"), label: t("canvas.nodeToolbar.info"), icon: <Info className="size-4" />, onClick: () => onInfo(node) },
         ...(node.type === CanvasNodeType.Group && onUngroup ? [{ id: "ungroup", title: t("canvas.nodeToolbar.ungroupTitle"), label: t("canvas.nodeToolbar.ungroup"), icon: <Ungroup className="size-4" />, onClick: () => onUngroup(node) }] : []),
         ...(node.type === CanvasNodeType.Group && onBatchDownload ? [{ id: "batchDownload", title: "批量下载图片（选择目录）", label: batchDownloading ? "打包中…" : "批量下载", icon: <Download className="size-4" />, onClick: () => onBatchDownload(node), disabled: batchDownloading }] : []),
@@ -166,9 +171,9 @@ export function CanvasNodeHoverToolbar({
         ...(isAudio ? [{ id: "uploadAudio", title: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), label: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
-    const pinnedIds = ["paint", "crop", "split"];
+    const pinnedIds = ["paint", "crop", "split", "extract", "addToAgent"];
     const pinnedTools = imageTools.filter((tool) => pinnedIds.includes(tool.id)).sort((a, b) => pinnedIds.indexOf(a.id) - pinnedIds.indexOf(b.id));
-    const toolbarTools = hasImage ? [...pinnedTools, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => !pinnedIds.includes(tool.id) && quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
+    const toolbarTools = hasImage ? [...pinnedTools, { id: "extract", title: "提取选区", label: "提取选区", icon: <Scan className="size-4" />, onClick: () => onExtractSelection(node) }, baseToolbarTools[0], ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => !pinnedIds.includes(tool.id) && quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry" && !pinnedIds.includes(tool.id)) as ImageToolbarSettingsTool[];
 
     const closeImageToolSettings = () => {
@@ -304,7 +309,7 @@ function ToolbarAction({ title, label, icon, onClick, showLabel, active = false,
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
             <button type="button" className={`group relative flex h-12 items-center whitespace-nowrap px-1.5 disabled:opacity-40 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title} disabled={disabled}>
-                <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[#f0f0f1] ${active ? "bg-[#eeeeef]" : ""}`}>
+                <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-black/5 dark:group-hover:bg-white/10 ${active ? "bg-black/5 dark:bg-white/10" : ""}`}>
                     {icon}
                     {hasText ? <span>{label}</span> : null}
                 </span>

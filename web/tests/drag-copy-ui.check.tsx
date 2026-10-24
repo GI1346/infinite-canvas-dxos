@@ -207,7 +207,7 @@ async function main() {
                 const input = h.find("table").querySelector<HTMLElement>("input,textarea,select")!; assert.ok(input);
                 await down(input, { clientX: 500, clientY: 400, altKey: true }); await move({ clientX: 600, clientY: 450, altKey: true }); await up({ clientX: 600, clientY: 450 }); assert.equal(h.state.nodes.length, 1); assert.equal(h.state.isNodeDragging, false);
                 const port = h.find("table").querySelector<HTMLElement>('[data-table-port="input-3"] span')!;
-                await down(port, { clientX: 500, clientY: 400, altKey: true }); assert.deepEqual(h.state.connecting, { nodeId: "table", handleType: "target", portId: "input-3" }); assert.equal(h.state.isNodeDragging, false); assert.equal(h.state.nodes.length, 1);
+                await down(port, { clientX: 500, clientY: 400, altKey: true }); assert.deepEqual(h.state.connecting, { nodeId: "table", handleType: "target", portId: "input-3", sourceNodeIds: undefined }); assert.equal(h.state.isNodeDragging, false); assert.equal(h.state.nodes.length, 1);
             } finally { await h.close(); }
         });
         console.log(`Alt drag UI: ${passed}/${passed} passed (actual project AST handlers/effects + React DOM CanvasNode/InfiniteCanvas; no browser physical gesture, no API)`);
