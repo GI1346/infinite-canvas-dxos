@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { imageOutputCropContext } from "@/lib/canvas/canvas-local-fusion";
+import { fitNodeSize, IMAGE_NODE_MAX_EDGE } from "@/lib/canvas/canvas-node-size";
 import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { buildLlmOutputOps, buildLlmPrompt, collectLlmInputs, LLM_TYPE, llmTableSystemPrompt } from "@/lib/canvas/dxos-llm";
 import { CONCURRENT_TYPE, generationRows, selectedGenerationRows, runRowPool, runningTableBatches, type DxBatchRun } from "@/lib/canvas/dxos-table";
@@ -99,8 +100,9 @@ async function runConcurrent(node: CanvasNodeData, host: CanvasWorkflowHost, opt
     };
     runningTableBatches.add(node.id);
     write(host, node.id, { status: "loading", errorDetails: undefined }); publish();
+    const rowGap = mode === "image" ? IMAGE_NODE_MAX_EDGE + 40 : 320;
     const group = nanoid(), origin = { x: node.position.x + node.width + 100, y: node.position.y };
-    host.applyOps([{ type: "add_node", id: group, nodeType: "group", title: "批量生成结果", position: { x: origin.x - 20, y: origin.y - 40 }, width: 380, height: chosen.length * 320 + 60 }]);
+    host.applyOps([{ type: "add_node", id: group, nodeType: "group", title: "批量生成结果", position: { x: origin.x - 20, y: origin.y - 40 }, width: mode === "image" ? IMAGE_NODE_MAX_EDGE + 40 : 380, height: chosen.length * rowGap + 60 }]);
     try {
         await runRowPool(chosen, Math.max(1, meta.tableBatchConcurrency || 1), signal, async (row) => {
             assertRun(host, node.id, run);
@@ -108,7 +110,7 @@ async function runConcurrent(node: CanvasNodeData, host: CanvasWorkflowHost, opt
             const task = state.tasks.find((item) => item.rowNumber === row.rowNumber)!;
             const id = nanoid(); task.status = "running"; task.outputIds = [id]; publish();
             const cropContext = imageOutputCropContext(row.media, host.getNodes(), host.getConnections());
-            const position = { x: origin.x, y: origin.y + chosen.findIndex((item) => item.rowNumber === row.rowNumber) * 320 };
+            const position = { x: origin.x, y: origin.y + chosen.findIndex((item) => item.rowNumber === row.rowNumber) * rowGap };
             const prompt = [row.text, options.prompt ?? meta.prompt].filter(Boolean).join("\n"), references = row.media.map((media) => media.url);
             host.applyOps([{ type: "add_node", id, nodeType: mode, title: `第 ${row.rowNumber} 行`, position, width: 300, height: 280, metadata: { groupId: group, status: "loading", prompt, model, ...(mode === "image" ? { cropContext } : {}) } }, { type: "connect_nodes", fromNodeId: node.id, toNodeId: id }]);
             try {
@@ -127,7 +129,10 @@ async function runConcurrent(node: CanvasNodeData, host: CanvasWorkflowHost, opt
                 assertRun(host, node.id, run);
                 if (signature() !== initialSignature) { controller.abort(); throw new Error("生成期间表格输入或模型设置发生变化，请重新运行"); }
                 if (!host.getNode(id)) throw new Error("生成结果节点已删除，未重新创建");
-                host.applyOps([{ type: "update_node", id, metadata: output }]); task.status = "success";
+                const current = host.getNode(id)!;
+                const size = mode === "image" && current.width === 300 && current.height === 280 && !current.metadata?.imageSizeManual && !current.metadata?.freeResize
+                    ? fitNodeSize(output.naturalWidth!, output.naturalHeight!) : undefined;
+                host.applyOps([{ type: "update_node", id, ...(size ? { patch: size } : {}), metadata: output }]); task.status = "success";
             } catch (error) {
                 task.status = !active() || (error instanceof DOMException && error.name === "AbortError") ? "stopped" : "error"; task.error = error instanceof Error ? error.message : String(error);
                 if (owns(node.id, run) && visible(host, node.id) && host.getNode(id)) host.applyOps([{ type: "update_node", id, metadata: { status: "error", errorDetails: task.error } }]);

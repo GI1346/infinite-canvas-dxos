@@ -1,0 +1,86 @@
+import assert from "node:assert/strict";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { CanvasAssistantDock } from "../src/components/agent/canvas-assistant-dock";
+import { anchorAssistantDock, clampAssistantDock, type AssistantDockLayout } from "../src/lib/canvas/assistant-dock-layout";
+import { useCanvasAssistantStore, type CanvasAssistantContext } from "../src/stores/use-canvas-assistant-store";
+import { defaultConfig, useConfigStore } from "../src/stores/use-config-store";
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+const screen = { width: 1600, height: 1000 };
+Object.defineProperty(window, "innerWidth", { value: screen.width, writable: true });
+Object.defineProperty(window, "innerHeight", { value: screen.height, writable: true });
+HTMLElement.prototype.scrollIntoView = function () {};
+const within = (layout: AssistantDockLayout, width = screen.width, height = screen.height) => {
+    assert(layout.x >= 8 && layout.x + Math.min(420, width - 16) <= width - 8);
+    assert(layout.y >= 8 && layout.y + layout.height <= height - 8);
+    assert(layout.orbX >= 8 && layout.orbX + 56 <= width - 8);
+    assert(layout.orbY >= 8 && layout.orbY + 56 <= height - 8);
+};
+const initial = { orbX: 1300, orbY: 500, x: 1000, y: 80, height: 600 };
+for (const orbX of [-100, 0, 450, 900, 1700]) for (const orbY of [-100, 0, 500, 1100]) within(anchorAssistantDock({ ...initial, orbX, orbY }, screen));
+within(clampAssistantDock({ ...initial, height: 5000 }, { width: 320, height: 180 }), 320, 180);
+console.log("PASS orb/panel anchoring at all viewport edges and small windows.");
+const fire = async (target: EventTarget, event: Event) => act(async () => { target.dispatchEvent(event); await tick(); });
+const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 3, clientX: x, clientY: y });
+const click = async (target: EventTarget, x = 0, y = 0) => {
+    await fire(target, pointer("pointerdown", x, y)); await fire(target, pointer("pointerup", x, y));
+    await fire(target, new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+};
+const host = document.createElement("div"); document.body.append(host); let root = createRoot(host);
+const snapshot = { projectId: "dock-test", title: "dock-test", nodes: [], connections: [], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } };
+const context: CanvasAssistantContext = { snapshot, getSnapshot: () => snapshot, applyOps: () => snapshot, runNode: async () => undefined };
+useConfigStore.setState({ config: { ...defaultConfig, channels: [], models: [], textModel: "", imageModel: "", videoModel: "" } });
+useCanvasAssistantStore.setState({ context, sessions: [], currentId: "", loading: false, open: false });
+localStorage.setItem("blinkflow:canvas-assistant-layout", JSON.stringify(initial));
+const saved = () => JSON.parse(localStorage.getItem("blinkflow:canvas-assistant-layout")!) as AssistantDockLayout;
+const panel = () => host.querySelector<HTMLElement>("[data-assistant-panel]")!;
+const orb = () => host.querySelector<HTMLElement>("[data-assistant-orb]")!;
+async function main() {
+    await act(async () => { root.render(<CanvasAssistantDock />); await tick(); });
+    const atStart = panel().style.left;
+    // Pointer-up before React's render verifies that persistence keeps the final drag.
+    await act(async () => {
+        orb().dispatchEvent(pointer("pointerdown", 1328, 528));
+        window.dispatchEvent(pointer("pointermove", 1028, 428));
+        window.dispatchEvent(pointer("pointerup", 1028, 428));
+        await tick();
+    });
+    const afterDrag = saved();
+    assert.equal(afterDrag.orbX, 1000); assert.equal(afterDrag.orbY, 400);
+    assert.equal(afterDrag.x, 568); assert.equal(afterDrag.y, 128);
+    assert.notEqual(panel().style.left, atStart);
+    await fire(orb(), new MouseEvent("click", { bubbles: true, cancelable: true }));
+    assert.equal(useCanvasAssistantStore.getState().open, false);
+    await click(orb(), 1028, 428); assert.equal(useCanvasAssistantStore.getState().open, true);
+    assert.equal(panel().style.left, "568px"); assert.equal(panel().style.top, "128px");
+    console.log("PASS moved orb anchors panel; same-tick pointer-up persists final position; drag click does not open panel.");
+    const header = host.querySelector<HTMLElement>("[data-assistant-drag-handle]")!;
+    await fire(header, pointer("pointerdown", 600, 145));
+    await fire(window, pointer("pointermove", 650, 185));
+    await fire(window, pointer("pointerup", 650, 185));
+    assert.equal(panel().style.left, "618px"); assert.equal(panel().style.top, "168px");
+    assert.equal(saved().orbX, 1050); assert.equal(saved().orbY, 440);
+    await click(host.querySelector('[aria-label="收起 Agent"]')!);
+    assert.equal(orb().style.left, "1050px"); assert.equal(orb().style.top, "440px");
+    await click(orb(), 1078, 468);
+    assert.equal(panel().style.left, "618px"); assert.equal(panel().style.top, "168px");
+    console.log("PASS panel title moves orb too; collapse/reopen retains dragged position.");
+    await click(host.querySelector('[aria-label="收起 Agent"]')!);
+    await fire(orb(), pointer("pointerdown", 1078, 468));
+    await fire(window, pointer("pointermove", 178, 268));
+    await fire(window, pointer("pointerup", 178, 268));
+    await fire(orb(), new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await act(async () => useCanvasAssistantStore.getState().setOpen(true));
+    assert.equal(panel().style.left, "218px"); assert.equal(panel().style.top, "8px");
+    await act(async () => root.unmount()); root = createRoot(host);
+    await act(async () => root.render(<CanvasAssistantDock />));
+    assert.equal(panel().style.left, "218px"); assert.equal(panel().style.top, "8px");
+    window.innerWidth = 500; window.innerHeight = 400;
+    await fire(window, new Event("resize"));
+    assert(parseFloat(panel().style.left) >= 8 && parseFloat(panel().style.left) + 420 <= 492);
+    assert(parseFloat(panel().style.top) >= 8 && parseFloat(panel().style.top) + parseFloat(panel().style.height) <= 392);
+    console.log("PASS external open and remount use moved orb; resize keeps panel visible.");
+    await act(async () => root.unmount());
+}
+main().then(() => { host.remove(); console.log("ALL ASSISTANT DOCK LAYOUT CHECKS PASSED"); process.exit(0); }).catch(async (error) => { console.error(error); try { await act(async () => root.unmount()); } catch {} host.remove(); process.exit(1); });

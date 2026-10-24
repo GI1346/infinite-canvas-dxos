@@ -5,6 +5,10 @@ description: Planned follow-up work
 
 # TODO
 
+- Agent 全屏编辑、图片展示尺寸、单图保存及「暖调法式复古长条画册版」Skill 已实现并纳入 0.20.10，验收见 Pending Tests；发布附件与本地最新版须通过当次包体及远端 SHA256 校验。
+
+- BlinkFlow 0.20.10 空格误触、Agent 自动生成 / 浮窗跟随和新增完整设计 Skill 已实现，验收见 [Pending Tests](/docs/progress/pending-test)。本次不改异步任务轮询周期、超时、渠道、独立 Key 或安装目录数据位置。真实付费端到端生成及注册覆盖安装不以隔离测试替代。
+
 - BlinkFlow 0.20.8 图标透明边角、节点入口顺序、默认纯白 / 线网格 / 1 张 / 2K 与每次最大化启动已实现，分层验收记录于 [Pending Tests](/docs/progress/pending-test)。真实 Electron 两次启动与七档 ICO 透明四角、默认值及菜单 / 工具栏 5 组、类型检查与相关回归均通过；已保存偏好和独立 API 配置保留。本机 Agent 属于本地连接设置，不随发布分发。正式注册覆盖安装、原生任务栏视觉缓存与真实用户数据迁移仍需实际场景确认；不把模拟网络结果当作真实付费任务验收。
 
 - 0.20.7 源码、NSIS 安装包与校验文件已发布到 [v0.20.7 Release](https://github.com/GI1346/infinite-canvas-dxos/releases/tag/v0.20.7)，发布源码树、包体与远端附件 SHA256 已核对。该历史版本结果不替代 0.20.8 的当次包体验收。
@@ -14,6 +18,6 @@ description: Planned follow-up work
 - 0.20.5 鼠标浮层修复及此前发布的验收继续保留在 Pending Tests，均为历史证据，不替代当前包验收；物理浏览器 Alt 拖动和正式注册覆盖安装仍未宣称通过。
 - Keep the previous known-good installer until the replacement asset and checksum are verified, then retain one newest local installer; never upload API keys or user data.
 - Installer follow-up: actual overwrite installation and native-window visual acceptance are not claimed. The package was built, extracted byte-for-byte, and its production resources verified at 17456 without replacing the existing registered app. Tests and package checks are in [Pending Tests](/docs/progress/pending-test). Keep appId/userData/origin for upgrades.
-- Implemented behavior stays in Pending Tests until confirmation rather than being prematurely moved into the confirmed feature guide. The v0.20.2 changelog section is retained as history; this working release targets v0.20.8.
+- Implemented behavior stays in Pending Tests until confirmation rather than being prematurely moved into the confirmed feature guide. Earlier version sections are historical; this working release targets v0.20.10.
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

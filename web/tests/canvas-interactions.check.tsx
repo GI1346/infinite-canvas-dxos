@@ -137,8 +137,9 @@ async function gestures() {
     await test("输入文字时空格保留输入，失焦清除平移状态", async () => {
         const input = controls[0] as HTMLInputElement; input.focus();
         const event = new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }); await fire(input, event); assert.equal(event.defaultPrevented, false);
-        await down(input); await up(); assert.equal(drags, 2);
-        await key("keydown"); await fire(window, new Event("blur")); await down(input); await up(); assert.equal(drags, 3);
+        await down(input); await up(); assert.equal(drags, 1, "Space held after editing must pan instead of dragging the node");
+        await key("keyup");
+        await key("keydown"); await fire(window, new Event("blur")); await down(input); await up(); assert.equal(drags, 2);
     });
     await test("画布外浮层滚动不被画布缩放接管", async () => {
         const start = { ...viewport }, overlay = ui.host.querySelector("[data-canvas-overlay]")!;

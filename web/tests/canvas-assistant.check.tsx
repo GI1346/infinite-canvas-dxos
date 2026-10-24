@@ -11,7 +11,7 @@ import { useCanvasAssistantStore, type CanvasAssistantContext, type CanvasAssist
 import { defaultConfig, encodeChannelModel, useConfigStore, type AiConfig } from "../src/stores/use-config-store";
 import { useThemeStore } from "../src/stores/use-theme-store";
 import { canvasThemes } from "../src/lib/canvas-theme";
-import { loadAssistantSkills, useCanvasAssistantSkillStore } from "../src/stores/use-canvas-assistant-skill-store";
+import { loadAssistantSkills, getAssistantSkill, useCanvasAssistantSkillStore } from "../src/stores/use-canvas-assistant-skill-store";
 import type { CanvasNodeData } from "../src/types/canvas";
 
 HTMLElement.prototype.scrollIntoView = function () {};
@@ -120,6 +120,13 @@ async function main() {
     await skills.saveSkill({ ...skillDraft, content: "SKILL_EDITED_LATER" }, skill.id); responses = [(body) => { const system = JSON.stringify(body.messages[0]); assert(system.includes("SKILL_FROZEN_ORIGINAL")); assert(!system.includes("SKILL_EDITED_LATER")); return final("技能回合完成"); }]; await state().confirm(false);
     state().setDraft("下一轮使用更新技能"); responses = [(body) => { assert(JSON.stringify(body.messages[0]).includes("SKILL_EDITED_LATER")); return final("新技能已生效"); }]; await state().send();
     console.log("PASS selected Skill reaches actual system requests, stays frozen through tools and confirmation, and refreshes only on next turn.");
+    const advanced = getAssistantSkill("builtin:advanced-product-design")!; state().setSkill(advanced.id); state().setDraft("高级进阶完整技能验收");
+    responses = [(body) => { const actual = String(body.messages[0].content); assert(actual.includes("<selected-skill>\n" + advanced.content + "\n</selected-skill>")); assert(actual.includes("高级进阶版主图详情设计")); return final("完整高级技能已进入请求"); }]; await state().send();
+    assert.equal(current().messages.at(-1)?.text, "完整高级技能已进入请求");
+    console.log("PASS full verbatim advanced Skill body is sent in the actual Agent system request without shortening.");
+    const warm = getAssistantSkill("builtin:warm-french-album")!; state().setSkill(warm.id); state().setDraft("暖调法式完整技能验收");
+    responses = [(body) => { const actual = String(body.messages[0].content); assert(actual.includes("<selected-skill>\n" + warm.content + "\n</selected-skill>")); assert(actual.includes("暖调法式复古长条画册版")); return final("暖调法式技能完整进入请求"); }]; await state().send();
+    assert.equal(current().messages.at(-1)?.text, "暖调法式技能完整进入请求"); console.log("PASS full warm French album Skill reaches actual system request; final-only planning starts no generation.");
     state().addReferences(["skill-input"]); state().setOpen(false);
     let bubbled = 0; const countBubble = () => { bubbled += 1; }; document.addEventListener("pointerdown", countBubble); document.addEventListener("wheel", countBubble);
     await act(async () => root.render(<CanvasAssistantDock />));

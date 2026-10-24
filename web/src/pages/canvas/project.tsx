@@ -19,7 +19,7 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
-import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { fitNodeSize, generatedImageNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
@@ -198,7 +198,7 @@ function measureFocusFrame(container: HTMLDivElement | null, nodeId: string) {
 
 function InfiniteCanvasPage() {
     const { message, modal } = App.useApp();
-    const { downloading: batchDownloading, downloadImages } = useCanvasImageDownload();
+    const { downloading: batchDownloading, downloadImages, downloadImage } = useCanvasImageDownload();
     const { t } = useTranslation();
     // Subscribe to the registry version so plugin registration changes rerender the canvas.
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
@@ -1843,7 +1843,7 @@ function InfiniteCanvasPage() {
     );
 
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position, ...(node.type === CanvasNodeType.Image ? { metadata: { ...node.metadata, imageSizeManual: true } } : {}) } : node)));
     }, []);
 
     const handleNodeResizeStart = useCallback(() => {
@@ -1962,18 +1962,13 @@ function InfiniteCanvasPage() {
     }, []);
 
     const downloadNodeImage = useCallback(async (node: CanvasNodeData) => {
+        if (node.type === CanvasNodeType.Image) return downloadImage(node);
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
         const mimeType = await canvasDownloadMimeType(node.metadata.content, node.metadata.mimeType);
         saveAs(node.metadata.content, canvasDownloadName(node.title || node.type, node.metadata.content, mimeType, node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(mimeType) : "png"));
-    }, []);
+    }, [downloadImage]);
 
-    const downloadBatchImage = useCallback(async (node: CanvasNodeData, imageId: string) => {
-        const image = node.metadata?.images?.find((item) => item.id === imageId);
-        if (!image?.content) return;
-        const mimeType = await canvasDownloadMimeType(image.content, image.mimeType);
-        saveAs(image.content, canvasDownloadName(node.title || "image", image.content, mimeType, "png", (node.metadata?.images?.findIndex((item) => item.id === imageId) ?? 0) + 1));
-    }, []);
-
+    const downloadBatchImage = useCallback((node: CanvasNodeData, imageId: string) => downloadImage(node, imageId), [downloadImage]);
     const captureVideoNodeFrame = useCallback(
         async (nodeId: string, position: VideoFramePosition) => {
             setContextMenu(null);
@@ -2329,8 +2324,7 @@ function InfiniteCanvasPage() {
                     { signal: controller.signal },
                 ).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
-                const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, ...generatedImageNodeSize(uploaded.width, uploaded.height, item), metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
@@ -2434,6 +2428,7 @@ function InfiniteCanvasPage() {
                                           ...imageMetadata(image),
                                           errorDetails: undefined,
                                           freeResize: false,
+                                          imageSizeManual: false,
                                           cropContext: { full: true },
                                           images: undefined,
                                           generationType: undefined,
@@ -2708,17 +2703,15 @@ function InfiniteCanvasPage() {
                                 assertActive();
                     const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                     assertActive();
-                                const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
                                 updateNodes((prev) =>
                                     prev.map((node) => {
                                         if (node.id !== rootId) return node;
                                         const images = node.metadata?.images?.map((image) => (image.id === imageId ? item : image)) || [];
                                         if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images } };
-                                        const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
+                                        const imageSize = generatedImageNodeSize(uploaded.width, uploaded.height, node, Boolean(reuseImageNode && sourceNode?.metadata?.content));
                                         return {
                                             ...node,
-                                            position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
                                             ...imageSize,
                                             metadata: {
                                                 ...node.metadata,
@@ -3110,12 +3103,11 @@ function InfiniteCanvasPage() {
                     prev.map((item) => {
                         if (item.id !== node.id) return item;
                         const makePrimary = !imageId || !item.metadata?.content;
-                        const edge = imageId ? Math.max(item.width, item.height) : 0;
-                        const imageSize = imageId && item.metadata?.freeResize ? { width: item.width, height: item.height } : imageId ? fitNodeSize(uploadedImage.width, uploadedImage.height, edge, edge) : fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
+                        const imageSize = generatedImageNodeSize(uploadedImage.width, uploadedImage.height, item);
                         return {
                             ...item,
                             type: CanvasNodeType.Image,
-                            ...(makePrimary ? { width: imageSize.width, height: imageSize.height, ...(imageId ? { position: { x: item.position.x + item.width / 2 - imageSize.width / 2, y: item.position.y + item.height / 2 - imageSize.height / 2 } } : {}) } : {}),
+                            ...(makePrimary ? imageSize : {}),
                             metadata: {
                                 ...item.metadata,
                                 ...(makePrimary ? imageMetadata(uploadedImage) : { status: NODE_STATUS_SUCCESS }),
@@ -3684,7 +3676,14 @@ function InfiniteCanvasPage() {
                 <CanvasRelayTasksModal open={tasksOpen} onClose={() => setTasksOpen(false)} onImages={async (urls, title) => {
                     const images = await Promise.all(urls.map((url) => uploadImage(url)));
                     const p = { x: -viewportRef.current.x / viewportRef.current.k + 80, y: -viewportRef.current.y / viewportRef.current.k + 100 };
-                    setNodes((prev) => [...prev, ...images.map((image, i) => ({ id: nanoid(), type: CanvasNodeType.Image, title: title + (images.length > 1 ? `-${i + 1}` : ""), position: { x: p.x + i * 330, y: p.y }, ...fitNodeSize(image.width, image.height, 300, 300), metadata: imageMetadata(image) }))]);
+                    let x = p.x;
+                    const imported = images.map((image, i) => {
+                        const size = fitNodeSize(image.width, image.height);
+                        const node = { id: nanoid(), type: CanvasNodeType.Image, title: title + (images.length > 1 ? `-${i + 1}` : ""), position: { x, y: p.y }, ...size, metadata: imageMetadata(image) };
+                        x += size.width + 30;
+                        return node;
+                    });
+                    setNodes((prev) => [...prev, ...imported]);
                 }} />
                 <CanvasCleanupModal open={cleanupOpen} projectId={projectId} onClose={() => setCleanupOpen(false)} beforeOperation={() => {
                     const busy = nodesRef.current.some((n) => n.metadata?.status === "loading") || runningTableBatches.size > 0 || isLocalFusionRunning();

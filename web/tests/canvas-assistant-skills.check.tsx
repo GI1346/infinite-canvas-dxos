@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import React, { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import localforage from "localforage";
@@ -22,15 +24,30 @@ function textFile(name: string, content: string, path = "") { const file = new F
 const draft: AssistantSkillDraft = { name: "独立测试技能", description: "测试说明", content: "先读取素材，再创建真实工作流。", inputMode: "any", tags: [" 测试 ", "测试"] };
 async function main() {
     await db.clear(); store.setState({ skills: [], favorites: [], loading: false, loaded: false, error: "" });
-    assert.equal(builtins.length, 11); assert.equal(new Set(builtins.map((item) => item.id)).size, 11);
+    assert.equal(builtins.length, 13); assert.equal(new Set(builtins.map((item) => item.id)).size, 13); assert.equal(new Set(builtins.map((item) => item.name)).size, 13);
     for (const item of builtins) { validate(item); assert.equal(item.source, "builtin"); assert(item.id.startsWith("builtin:")); assert(item.content.length > 30); }
+    const warm = builtins.find((item) => item.id === "builtin:warm-french-album")!;
+    const warmRaw = readFileSync("src/lib/canvas/skills/warm-french-album.md", "utf8").replace(/\r\n/g, "\n");
+    assert.equal(warm.name, "暖调法式复古长条画册版"); assert.equal(warm.inputMode, "image");
+    assert.equal(warm.content, warmRaw); assert.equal(createHash("sha256").update(warm.content).digest("hex"), "d9220a5bc0152d3da367303d2c4174396ce2b257b57b3a2996f45762ecae1823");
+    assert(warm.content.includes("本次只输出策划及提示词，不直接生成图片。"));
+    assert(warm.content.includes("只有详情页07采用三联竖向长矩形卡片"));
+    assert(buildAssistantSkillPrompt(warm).includes(warmRaw));
+    const advanced = builtins.find((item) => item.id === "builtin:advanced-product-design")!;
+    const rawAdvanced = readFileSync("src/lib/canvas/skills/advanced-product-design.md", "utf8").replace(/\r\n/g, "\n");
+    const advancedHash = (value: string) => createHash("sha256").update(value).digest("hex");
+    assert.equal(advanced.name, "高级进阶版主图详情设计"); assert.equal(advanced.inputMode, "image"); assert.deepEqual(advanced.tags, ["电商", "设计"]);
+    assert.equal(advanced.content, rawAdvanced); assert.equal(advancedHash(rawAdvanced), "f7028db0b8fc06082f97e49a3aba49447d0ac997cba307ea7e88470e62921b70");
+    assert.equal(advancedHash(advanced.content), advancedHash(rawAdvanced));
+    assert.equal((advanced.content.match(/^# /gm) || []).length, 10); assert.equal((advanced.content.match(/^## /gm) || []).length, 8); assert.equal((advanced.content.match(/^### /gm) || []).length, 8);
+    assert(buildAssistantSkillPrompt(advanced).includes("<selected-skill>\n" + rawAdvanced + "\n</selected-skill>"));
     const builtin = builtins[0], original = JSON.stringify(builtin); assert.equal(getAssistantSkill(), undefined); assert.equal(getAssistantSkill("missing"), undefined);
     const prompt = buildAssistantSkillPrompt(builtin); assert(prompt.includes(builtin.content)); assert(prompt.includes(builtin.name)); assert(prompt.includes("需要文本")); assert.equal(buildAssistantSkillPrompt(), "");
     assert.deepEqual(parse('\uFEFF---\r\nname: "分析技能"\r\ndescription: >\r\n  第一行\r\n  第二行\r\ninputMode: image\r\ntags: ["图片", \'分析\']\r\n---\r\n先看图，再说明。', "fallback.md"), { name: "分析技能", description: "第一行 第二行", inputMode: "image", tags: ["图片", "分析"], content: "先看图，再说明。" });
     assert.equal(parse("正文", "随手写.txt").name, "随手写"); assert.equal(parse("---\ninputMode: invalid\n---\n正文", "fallback.markdown").inputMode, "any");
     assert.throws(() => parse("---\nname: 空白\n---\n  ", "empty.md"), /正文为空/); assert.throws(() => validate({ ...draft, name: " " }), /名称/);
     const script = 'globalThis.__skillShouldNotRun = true; <script>alert("x")</script>'; assert.equal(parse(script, "script.md").content, script); assert.equal((globalThis as any).__skillShouldNotRun, undefined);
-    console.log("PASS 11 independent builtins, BOM/CRLF/frontmatter/plain-text parsing, validation and system-prompt content; text never executes.");
+    console.log("PASS 13 unique builtins, advanced Skill exact body/hash and 10 sections, BOM/CRLF/frontmatter/plain-text parsing, validation and system-prompt content; text never executes.");
     await Promise.all([load(), load()]); assert(state().loaded); assert.deepEqual(state().skills, []);
     await assert.rejects(() => state().saveSkill({ ...draft, content: " " }), /正文为空/);
     const saved = await state().saveSkill(draft); assert(saved.id.startsWith("user:")); assert.deepEqual(saved.tags, ["测试"]);
@@ -49,9 +66,26 @@ async function main() {
     await click(label(`收藏${builtins[1].name}`)); await act(async () => { await tick(); }); assert(state().favorites.includes(builtins[1].id)); await click(button("收藏", popup()!)); assert(popup()!.textContent?.includes(builtins[1].name)); await click(button("通用", popup()!)); await click(label(`查看${builtin.name}`)); assert(popup()!.querySelector<HTMLInputElement>("input")!.readOnly); assert(popup()!.querySelector("textarea")!.readOnly);
     await click(button("复制为我的 Skill", popup()!)); assert(!popup()!.querySelector<HTMLInputElement>("input")!.readOnly); await click(button("保存", popup()!)); await act(async () => { await tick(); }); assert(state().skills.some((item) => item.name === `${builtin.name} 副本` && item.content === builtin.content)); assert.equal(JSON.stringify(builtin), original);
     await click(button("通用", popup()!)); await field(label("搜索 Skill") as HTMLInputElement, "品牌 Logo"); assert(popup()!.textContent?.includes("品牌 Logo 设计")); assert(!popup()!.textContent?.includes("商品卖点提炼")); const select = [...popup()!.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.querySelector("span.font-semibold")?.textContent?.includes("品牌 Logo 设计"))!; assert(select); await click(select); assert.equal(selected, "builtin:brand-logo"); assert.equal(popup(), null); assert(host.textContent?.includes("品牌 Logo 设计")); await click(label("取消当前 Skill", host)); assert.equal(selected, undefined);
+    await click(button("Skill", host)); await field(label("搜索 Skill") as HTMLInputElement, "高级进阶");
+    assert(popup()!.textContent?.includes(advanced.name)); assert(!popup()!.textContent?.includes("商品卖点提炼"));
+    await click(label(`查看${advanced.name}`)); assert(popup()!.querySelector<HTMLInputElement>("input")!.readOnly); assert(popup()!.querySelector("textarea")!.readOnly); assert.equal(popup()!.querySelector("textarea")!.value, rawAdvanced);
+    await click(button("复制为我的 Skill", popup()!)); assert.equal(popup()!.querySelector("textarea")!.value, rawAdvanced); assert(!popup()!.querySelector("textarea")!.readOnly);
+    await click(button("保存", popup()!)); await act(async () => { await tick(); });
+    assert(state().skills.some((item) => item.name === `${advanced.name} 副本` && item.content === rawAdvanced.trim())); assert.equal(advanced.content, rawAdvanced);
+    await click(button("通用", popup()!)); await field(label("搜索 Skill") as HTMLInputElement, "高级进阶");
+    const advancedSelect = [...popup()!.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.querySelector("span.font-semibold")?.textContent === advanced.name)!; assert(advancedSelect);
+    await click(advancedSelect); assert.equal(selected, advanced.id); assert.equal(popup(), null); assert(host.textContent?.includes(advanced.name)); await click(label("取消当前 Skill", host)); assert.equal(selected, undefined);
+    console.log("PASS advanced Skill searchable/selectable, full body readonly, complete-content editable copy, original remains unchanged.");
+    await click(button("Skill", host)); await field(label("搜索 Skill") as HTMLInputElement, "暖调法式");
+    assert(popup()!.textContent?.includes(warm.name)); await click(label(`查看${warm.name}`));
+    assert.equal(popup()!.querySelector("textarea")!.value, warmRaw); assert(popup()!.querySelector("textarea")!.readOnly);
+    await click(button("返回", popup()!)); await field(label("搜索 Skill") as HTMLInputElement, "暖调法式");
+    const warmSelect = [...popup()!.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.querySelector("span.font-semibold")?.textContent === warm.name)!;
+    await click(warmSelect); assert.equal(selected, warm.id); await click(label("取消当前 Skill", host));
+    console.log("PASS warm French album Skill exact attachment body, hash, searchable/read-only/selectable and injected without triggering generation.");
     await click(button("Skill", host)); await fire(popup()!, new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })); assert.equal(popup(), null); await click(button("Skill", host)); await fire(document.body, new PointerEvent("pointerdown", { bubbles: true, button: 0 })); assert.equal(popup(), null);
     await click(button("Skill", host)); await act(async () => useThemeStore.setState({ theme: "dark" })); const color = document.createElement("span"); color.style.color = canvasThemes.dark.node.text; assert.equal(popup()!.style.color, color.style.color); await act(async () => root.render(<Harness disabled />)); assert.equal(popup(), null); assert(button("Skill", host).disabled); document.removeEventListener("pointerdown", count); document.removeEventListener("wheel", count); document.removeEventListener("keydown", count);
     console.log("PASS DOM menu, favorite, builtin readonly/copy, search, selection/chip removal, portal z280, canvas event isolation, Escape/outside close, dark theme and disabled state.");
-    await act(async () => root.unmount()); host.remove(); await clearAssistantSkills(); assert.deepEqual(state().skills, []); assert.deepEqual(state().favorites, []); assert.equal(builtins.length, 11); assert.deepEqual((await db.getItem<any>("catalog")).skills, []); console.log("PASS cleanup clears user Skill/favorites and retains application builtins.");
+    await act(async () => root.unmount()); host.remove(); await clearAssistantSkills(); assert.deepEqual(state().skills, []); assert.deepEqual(state().favorites, []); assert.equal(builtins.length, 13); assert.deepEqual((await db.getItem<any>("catalog")).skills, []); console.log("PASS cleanup clears user Skill/favorites and retains application builtins.");
 }
 main().then(() => { console.log("ALL CANVAS ASSISTANT SKILL CHECKS PASSED"); process.exit(0); }).catch(async (error) => { console.error(error); await act(async () => root.unmount()); host.remove(); process.exit(1); });

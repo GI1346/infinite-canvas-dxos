@@ -8,7 +8,7 @@ const outfile = path.resolve(".checks/batch-download-ui.cjs");
     await build({ entryPoints: ["tests/batch-download-ui.check.tsx"], bundle: true, platform: "node", format: "cjs", packages: "external", outfile, plugins: [{ name: "offline-download-io", setup(build) {
         build.onResolve({ filter: /^@\/services\/image-storage$/ }, () => ({ path: "images", namespace: "offline-download" }));
         build.onResolve({ filter: /^file-saver$/ }, () => ({ path: "save", namespace: "offline-download" }));
-        build.onLoad({ filter: /.*/, namespace: "offline-download" }, (args) => ({ contents: args.path === "save" ? "export const saveAs = (blob, name) => globalThis.__downloadSave(blob, name);" : "export const getImageBlob = (key) => globalThis.__downloadBlob(key); export const fetchImageBlob = (url) => { throw new Error('Offline test refused URL: '+url); };", loader: "js" }));
+        build.onLoad({ filter: /.*/, namespace: "offline-download" }, (args) => ({ contents: args.path === "save" ? "export const saveAs = (blob, name) => globalThis.__downloadSave(blob, name);" : "export const getImageBlob = (key) => globalThis.__downloadBlob(key); export const fetchImageBlob = (url) => globalThis.__downloadFetch(url);", loader: "js" }));
     } }] });
     execFileSync(process.execPath, ["--require", path.resolve("tests/channel-protocol-dom.cjs"), outfile], { stdio: "inherit" });
 })().catch((error) => { console.error(error); process.exitCode = 1; });

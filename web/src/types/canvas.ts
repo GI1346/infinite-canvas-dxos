@@ -102,6 +102,7 @@ export type CanvasNodeMetadata = {
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;
+    imageSizeManual?: boolean;
     images?: CanvasNodeImage[];
     primaryImageId?: string;
     storageKey?: string;

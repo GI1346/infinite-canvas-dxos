@@ -45,10 +45,10 @@ async function check(kind: "crop" | "mask" | "split") {
         assert.ok(scroll); control.focus(); let keyboardEvents = 0, clickEvents = 0; const count = () => keyboardEvents++; const countClick = () => clickEvents++;
         control.addEventListener("keydown", count); control.addEventListener("keyup", count); control.addEventListener("click", countClick);
         assert.equal((await space("keydown", control)).defaultPrevented, true);
-        for (let i = 0; i < 5; i++) assert.equal((await space("keydown", control, true)).defaultPrevented, true);
+        for (let i = 0; i < 5; i++) assert.equal((await space("keydown", document.activeElement || document.body, true)).defaultPrevented, true);
         scroll.scrollLeft = 130; scroll.scrollTop = 100;
         await fire(target, pointer("pointerdown", { clientX: 100, clientY: 100 })); await fire(target, pointer("pointermove", { clientX: 145, clientY: 130 })); await fire(target, pointer("pointerup", { buttons: 0 }));
-        assert.equal(scroll.scrollLeft, 85); assert.equal(scroll.scrollTop, 70); assert.equal((await space("keyup", control)).defaultPrevented, true);
+        assert.equal(scroll.scrollLeft, 85); assert.equal(scroll.scrollTop, 70); assert.equal((await space("keyup", document.activeElement || document.body)).defaultPrevented, true);
         assert.equal(snapshot(), before); assert.equal(keyboardEvents, 0); assert.equal(clickEvents, 0); assert.equal(confirmed, 0); assert.equal(closed, 0); assert.equal(ref.current!.style.cursor, ""); assert.deepEqual(viewport, { x: 25, y: 35, k: 1 });
         if (kind === "mask") {
             const textarea = modal.querySelector("textarea")!; textarea.focus(); assert.equal((await space("keydown", textarea)).defaultPrevented, false); assert.equal((await space("keydown", textarea, true)).defaultPrevented, false); assert.equal((await space("keyup", textarea)).defaultPrevented, false);

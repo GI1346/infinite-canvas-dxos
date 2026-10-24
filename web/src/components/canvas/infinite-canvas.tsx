@@ -32,6 +32,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         startedOnBackground: false,
     });
     const spaceRef = useRef(false);
+    const typingSpaceRef = useRef(false);
     const suppressClickRef = useRef(false);
     const cuttingRef = useRef(isCuttingConnections);
     cuttingRef.current = isCuttingConnections;
@@ -77,23 +78,31 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         };
         const isCanvasKeyTarget = (target: EventTarget | null) => {
             if (!(target instanceof Element)) return true;
-            return !target.closest("[data-canvas-overlay],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown,[data-connection-create-menu]") && !(target.closest("[data-canvas-no-zoom]") && !target.closest("[data-node-id]")) && (containerRef.current?.parentElement?.contains(target) || target === document.body || target === document.documentElement);
+            if (target.closest(".ant-modal") || Array.from(document.querySelectorAll<HTMLElement>(".ant-modal-wrap")).some((modal) => getComputedStyle(modal).display !== "none")) return false; // Modal gestures still own repeats/keyup after a focused button is blurred.
+            return containerRef.current?.parentElement?.contains(target) || target === document.body || target === document.documentElement || Boolean(target.closest("[data-canvas-overlay],[data-canvas-no-zoom],.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown,[data-connection-create-menu]"));
         };
         const captureSpace = (event: KeyboardEvent) => {
             event.preventDefault();
             event.stopPropagation();
+            event.stopImmediatePropagation(); // Stop native button activation and other global shortcut listeners, including repeats/keyup.
         };
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.code !== "Space" || (!spaceRef.current && (isTextEditing(event.target) || !isCanvasKeyTarget(event.target)))) return;
+            if (event.code !== "Space" || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || (!spaceRef.current && !isCanvasKeyTarget(event.target))) return;
+            if (!spaceRef.current && isTextEditing(event.target)) {
+                typingSpaceRef.current = true; // Keep normal typing, but recognize a following Space + left drag as a pan.
+                return;
+            }
             captureSpace(event);
             if (spaceRef.current) return;
+            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
             spaceRef.current = true;
             setIsSpacePressed(true);
         };
 
         const handleKeyUp = (event: KeyboardEvent) => {
             if (event.code !== "Space") return;
-            if (spaceRef.current || (!isTextEditing(event.target) && isCanvasKeyTarget(event.target))) captureSpace(event);
+            if (spaceRef.current) captureSpace(event);
+            typingSpaceRef.current = false;
             spaceRef.current = false;
             setIsSpacePressed(false);
         };
@@ -101,6 +110,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         const handleBlur = () => {
             const wasPanning = panState.current.isPanning;
             spaceRef.current = false;
+            typingSpaceRef.current = false;
             setIsSpacePressed(false);
             panState.current.isPanning = false;
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -163,9 +173,9 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         if (target?.closest("[data-canvas-overlay],.ant-modal,.ant-popover,.ant-dropdown") || (target?.closest("[data-canvas-no-zoom]") && !target.closest("[data-node-id]"))) return;
         if (target?.closest("[data-connection-create-menu]")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
-        const shouldPan = event.button === 1 || (event.button === 0 && (spaceRef.current || (tool === "pan" && isBackgroundClick)));
+        const shouldPan = event.button === 1 || (event.button === 0 && (spaceRef.current || typingSpaceRef.current || (tool === "pan" && isBackgroundClick)));
 
-        if (event.button === 0 && event.ctrlKey && !spaceRef.current && !target?.closest("input,textarea,select,button,a,[role='button'],[contenteditable]:not([contenteditable='false']),[data-node-toolbar],[data-node-handle]")) {
+        if (event.button === 0 && event.ctrlKey && !spaceRef.current && !typingSpaceRef.current && !target?.closest("input,textarea,select,button,a,[role='button'],[contenteditable]:not([contenteditable='false']),[data-node-toolbar],[data-node-handle]")) {
             if (onConnectionCutStart?.(event)) {
                 event.preventDefault(); event.stopPropagation(); suppressClickRef.current = true; cuttingRef.current = true;
                 event.currentTarget.setPointerCapture(event.pointerId); return;
@@ -173,6 +183,11 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         }
 
         if (shouldPan) {
+            if (typingSpaceRef.current) {
+                spaceRef.current = true;
+                setIsSpacePressed(true);
+                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+            }
             suppressClickRef.current = true;
             event.preventDefault();
             event.stopPropagation();

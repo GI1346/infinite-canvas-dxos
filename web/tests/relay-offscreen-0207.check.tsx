@@ -20,7 +20,7 @@ const channel = createModelChannel({ id: "offline-image", baseUrl: RELAY_IMAGE_U
 const config = { ...defaultConfig, channels: [channel], model: "offline-image::synthetic-image", imageModel: "offline-image::synthetic-image" };
 const node = (id: string, type: string, metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({ id, type, title: id, position: { x: 40, y: 80 }, width: 400, height: 600, metadata });
 
-async function verify(resolution: "2k" | "4k") {
+async function verify(resolution: "2k" | "4k", manual = false) {
     useConfigStore.setState({ config });
     const batch = node("batch", CONCURRENT_TYPE, { imageAspectRatio: "auto", imageResolution: resolution, size: "auto", model: config.model, tableBatchConcurrency: 2 });
     let state: CanvasAgentSnapshot = { projectId: "offline", title: "offline", nodes: [node("table", TABLE_TYPE, { table: { ...emptyTable(), rows: [["第一行"], ["第二行"]] } }), batch], connections: [{ id: "input", fromNodeId: "table", toNodeId: batch.id }], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } };
@@ -56,10 +56,14 @@ async function verify(resolution: "2k" | "4k") {
     await act(async () => { moveOffscreen(); await tick(); });
     assert(host.querySelector('[aria-label="生成分辨率"]'), "active concurrent component must stay mounted after leaving viewport");
     assert(signals.every((signal) => !signal.aborted), "pan/culling must not cancel active native polls");
+    if (manual) { const id = state.nodes.find((item) => item.id === batch.id)!.metadata!.tableBatchRun!.tasks[0].outputIds[0]; state = applyCanvasAgentOps(state, [{ type: "update_node", id, patch: { width: 420, height: 270 }, metadata: { imageSizeManual: true } }]); }
     await act(async () => { polls.forEach((finish) => finish()); await tick(); });
     const run = state.nodes.find((item) => item.id === batch.id)!.metadata!.tableBatchRun!;
     assert.equal(run.state, "completed"); assert(run.tasks.every((task) => task.status === "success")); assert.equal(posts, 2, "completion must not resubmit native jobs");
     for (const task of run.tasks) { const output = state.nodes.find((item) => item.id === task.outputIds[0])!; assert.equal(output.metadata!.status, "success"); assert.equal(output.metadata!.content, "https://offline.invalid/completed.png"); }
+    const outputs = run.tasks.map((task) => state.nodes.find((item) => item.id === task.outputIds[0])!);
+    for (let i = 0; i < outputs.length; i++) { assert.equal(outputs[i].width, manual && i === 0 ? 420 : 640); assert.equal(outputs[i].height, manual && i === 0 ? 270 : 640); assert.equal(outputs[i].metadata!.naturalWidth, 1024); }
+    assert(outputs[1].position.y >= outputs[0].position.y + outputs[0].height + 40, "enlarged outputs must not overlap");
     assert(!runningTableBatches.has(batch.id)); assert.equal(host.querySelector('[aria-label="生成分辨率"]'), null, "completed offscreen component can be culled again");
     const saved = await relayTasks.getItem<{ status: string; resultUrls: string[] }>(`${resolution}-1`); assert.equal(saved?.status, "done"); assert.deepEqual(saved?.resultUrls, ["https://offline.invalid/completed.png"]);
     await act(async () => root.unmount()); host.remove();
@@ -67,7 +71,7 @@ async function verify(resolution: "2k" | "4k") {
 }
 async function main() {
     globalThis.setTimeout = ((callback: (...args: any[]) => void, ms?: number, ...args: any[]) => original.timeout(callback, ms === 3000 ? 0 : ms, ...args)) as typeof setTimeout;
-    try { await relayTasks.clear(); await verify("2k"); await verify("4k"); }
+    try { await relayTasks.clear(); await verify("2k"); await verify("4k"); await verify("2k", true); }
     finally { axios.defaults.adapter = original.adapter; globalThis.setTimeout = original.timeout; }
 }
 void main().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -1,3 +1,6 @@
+import { warmFrenchAlbumSkillContent } from "./skills/warm-french-album";
+import { advancedProductDesignSkillContent } from "./skills/advanced-product-design";
+
 export type CanvasAssistantSkill = {
     id: string;
     name: string;
@@ -24,6 +27,8 @@ export const BUILTIN_ASSISTANT_SKILLS: readonly CanvasAssistantSkill[] = [
     builtin("video-analysis", "视频反解", "依据真实视频材料提炼节奏和镜头描述", ["视频", "分析"], `先读取引用节点和已有文字说明，区分能实际查看的画面与仅有的视频地址。当前接口未提供视频逐帧视觉或声音时，明确材料缺口，不把文件名、缩略图或想象当成视频内容。对确实可观察的材料记录主体、动作、镜头、光线、转场、声音及时间依据；用户要复刻时把观察转成分镜与可编辑提示词节点。只分析时不自动生成；生成模型必须来自当前渠道。`),
     builtin("shot-design", "创作分镜", "设计机位、运动和连续动作的镜头方案", ["导演", "分镜", "视频"], `围绕叙事目的设计镜头，而非堆叠互相冲突的运镜词。每个镜头写明初始构图、主体动作、摄影机运动、结束状态与衔接线索，保持空间方向和角色连续。参考素材先读取后使用。提示词应清楚可执行，避免在单镜头中加入无法同时发生的多个场景切换。将镜头方案写成文本节点，再连接需要的图片/视频生成节点；沿用用户模型与现有参数，不强绑某个视频品牌。`),
     builtin("video-workflow", "视频创作标准流程", "从内容规划推进到可运行镜头工作流", ["视频", "工作流"], `先检查画布已有内容和当前制作阶段，复用已有成功产物，不从头重复建图。按实际需求推进内容大纲、剧本、角色与场景参考、分镜、镜头图、视频片段和剪辑说明；已有完整脚本时跳过不必要前置步骤。每阶段以可编辑节点承载正文，下一阶段连接真实参考。视频生成只在有相应已配置模型时建立可执行调用，不能声称本画布已经自动完成并未提供的音频混音或成片剪辑。按用户确认逐步运行，并读取真实结果报告失败或待办。`),
+    builtin("warm-french-album", "暖调法式复古长条画册版", "暖调法式复古 5 张主图、9 张详情页策划；只输出提示词，三联长条卡片仅用于详情页07", ["电商", "设计"], warmFrenchAlbumSkillContent, "image"),
+    builtin("advanced-product-design", "高级进阶版主图详情设计", "依据真实产品与风格参考策划 5 张主图、9 张详情页及逐张完整提示词", ["电商", "设计"], advancedProductDesignSkillContent, "image"),
 ];
 
 export function validateAssistantSkill(skill: AssistantSkillDraft) {

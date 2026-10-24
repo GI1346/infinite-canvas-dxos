@@ -38,11 +38,12 @@ export async function runLocalFusionNode(nodeId: string, getSnapshot: () => Loca
         assertCurrent();
         const latest = getSnapshot(), latestNode = latest.nodes.find((node) => node.id === nodeId);
         if (!latestNode || signature(nodeId, latest) !== initialSignature) throw new Error("融合期间画布或输入发生变化，请重新融合");
-        const id = nanoid(), size = fitNodeSize(image.width, image.height, 320, 360);
-        const count = latest.connections.filter((edge) => edge.fromNodeId === nodeId && latest.nodes.find((node) => node.id === edge.toNodeId)?.type === CanvasNodeType.Image).length;
+        const id = nanoid(), size = fitNodeSize(image.width, image.height);
+        const siblings = latest.connections.filter((edge) => edge.fromNodeId === nodeId).map((edge) => latest.nodes.find((node) => node.id === edge.toNodeId)).filter((node) => node?.type === CanvasNodeType.Image);
+        const y = Math.max(latestNode.position.y, ...siblings.map((node) => node!.position.y + node!.height + 24));
         const output: CanvasNodeData = {
             id, type: CanvasNodeType.Image, title: "融合结果",
-            position: { x: latestNode.position.x + latestNode.width + 80, y: latestNode.position.y + count * (size.height + 24) }, ...size,
+            position: { x: latestNode.position.x + latestNode.width + 80, y }, ...size,
             metadata: { ...imageMetadata(image), cropContext: { full: true } },
         };
         assertCurrent();

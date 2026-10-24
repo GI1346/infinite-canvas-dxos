@@ -4,7 +4,7 @@ import ts from "typescript";
 import { NODE_DEFAULT_SIZE } from "../src/constant/canvas";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { imageMetadata, audioMetadata, buildImageGenerationMetadata, buildAudioGenerationMetadata } from "../src/lib/canvas/canvas-node-factory";
-import { fitNodeSize, nodeSizeFromRatio } from "../src/lib/canvas/canvas-node-size";
+import { fitNodeSize, generatedImageNodeSize, nodeSizeFromRatio } from "../src/lib/canvas/canvas-node-size";
 
 // Compile the production callback body, rather than reimplementing its guards.
 // Only transport/persistence and React setters are supplied by this offline harness.
@@ -48,7 +48,7 @@ function setup() {
         setConnections: setter(() => edges, (value) => { edges = value; connectionsRef.current = value; }), setSelectedNodeIds: setter(() => selected, (value) => { selected = value; }), setSelectedConnectionId: setter(() => selectionEdge, (value) => { selectionEdge = value; }), setDialogNodeId: setter(() => dialog, (value) => { dialog = value; }), setExpandedBatchNodeIds: setter(() => expanded, (value) => { expanded = value; }),
         effectiveConfig: { count: "1", nodeRegenerateBehavior: "overwrite" }, isAiConfigReady: () => true, openConfigDialog: () => { throw new Error("unexpected config dialog"); },
         buildGenerationConfig: (_: unknown, _source: unknown, mode: string) => ({ model: mode, count: "1", size: "auto" }), buildNodeGenerationContext: (_id: string, _nodes: unknown, _edges: unknown, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [] }), hydrateNodeGenerationContext: async (context: unknown) => context, buildNodeResponseMessages: (context: unknown) => context,
-        getNodeDefinition: () => undefined, imageOutputCropContext: () => undefined, imageMetadata, audioMetadata, buildImageGenerationMetadata, buildAudioGenerationMetadata, getGenerationCount: Number, NODE_DEFAULT_SIZE, CanvasNodeType, fitNodeSize, nodeSizeFromRatio, generationReferenceUrls: () => [], nanoid: () => `generated-${++sequence}`,
+        getNodeDefinition: () => undefined, imageOutputCropContext: () => undefined, imageMetadata, audioMetadata, buildImageGenerationMetadata, buildAudioGenerationMetadata, getGenerationCount: Number, NODE_DEFAULT_SIZE, CanvasNodeType, fitNodeSize, generatedImageNodeSize, nodeSizeFromRatio, generationReferenceUrls: () => [], nanoid: () => `generated-${++sequence}`,
         requestGeneration: (...args: Parameters<typeof imageRequest>) => imageRequest(...args), requestEdit: (_config: unknown, prompt: string, _refs: unknown, options: { signal: AbortSignal }) => imageRequest(_config, prompt, options), uploadImage: async () => { uploadCalls++; return uploaded; },
         requestImageQuestion: (...args: Parameters<typeof textRequest>) => textRequest(...args), requestAudioGeneration: (...args: Parameters<typeof audioRequest>) => audioRequest(...args), storeGeneratedAudio: async () => { storeAudioCalls++; return { ...uploaded, mimeType: "audio/mpeg" }; },
         createVideoGenerationTask: (...args: Parameters<typeof videoCreate>) => videoCreate(...args), waitForVideoGenerationTask: () => videoWait(), storeGeneratedVideo: async () => { storeVideoCalls++; return { ...uploaded, mimeType: "video/mp4" }; }, applyGeneratedVideo: (item: CanvasNodeData) => ({ ...item, metadata: { ...item.metadata, status: "success", content: "new video" } }),
@@ -67,6 +67,14 @@ async function test(name: string, work: () => Promise<void> | void) { await work
 async function main() {
     const originalFetch = globalThis.fetch; globalThis.fetch = async () => { throw new Error("Network forbidden in native generation guard test"); };
     try {
+        await test("fresh generated image equals import size; empty target and explicit manual resize preserve correct geometry", async () => {
+            const app = setup(); await app.run("source", "image", "draw");
+            const output = app.graph().find((item) => item.type === "image")!; assert.deepEqual({width:output.width,height:output.height},fitNodeSize(uploaded.width,uploaded.height));
+            assert.equal(output.metadata?.naturalWidth, 2048); assert(output.position.x > 300); app.dispose();
+            for (const manual of [false, true]) { const app = setup(); app.nodesRef.current=[{...node("source","image"),width:180,height:240,metadata:{imageSizeManual:manual}}]; await app.run("source","image","draw");const out=app.graph()[0]; assert.equal(out.width,manual?180:640);assert.equal(out.height,manual?240:640); app.dispose(); }
+            const sample=node(); assert.deepEqual(generatedImageNodeSize(1152,2048,sample),{width:360,height:640}); assert.deepEqual(generatedImageNodeSize(64,32,sample),{width:64,height:32});
+            sample.metadata={freeResize:true}; assert.deepEqual(generatedImageNodeSize(1152,2048,sample),{width:300,height:240});
+        });
         await test("actual native pre-aborted caller dispatches no transport or graph write", async () => {
             const app = setup(), abort = new AbortController(); abort.abort(); await assert.rejects(app.run("source", "image", "draw", abort.signal), /生成已停止/); assert.equal(app.calls.length, 0); assert.equal(app.requests.current.size, 0); assert.equal(app.graph().length, 1); app.dispose();
         });

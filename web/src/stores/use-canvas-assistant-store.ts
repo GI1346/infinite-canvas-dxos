@@ -18,8 +18,15 @@ export type CanvasAssistantContext = {
 };
 export type CanvasAssistantMessage = { id: string; role: "user" | "assistant" | "tool" | "error"; text: string; references?: string[]; models?: string[] };
 export type CanvasAssistantSession = { id: string; projectId: string; title: string; model: string; messages: CanvasAssistantMessage[]; transcript: AiTextMessage[]; references: string[]; models: string[]; turnModels?: string[]; skillId?: string; turnSkillPrompt?: string; draft: string; running: boolean; status: string; pending?: AssistantAction; updatedAt: number };
+export type CanvasAssistantGenerationMode = "manual" | "auto";
+const generationModeKey = "blinkflow:canvas-assistant-generation-mode";
+export function readCanvasAssistantGenerationMode(): CanvasAssistantGenerationMode {
+    try { return localStorage.getItem(generationModeKey) === "auto" ? "auto" : "manual"; } catch { return "manual"; }
+}
+
 type ProjectSessions = { sessions: CanvasAssistantSession[]; currentId: string };
 type CanvasAssistantStore = {
+    generationMode: CanvasAssistantGenerationMode; setGenerationMode: (mode: CanvasAssistantGenerationMode) => void;
     open: boolean; context: CanvasAssistantContext | null; sessions: CanvasAssistantSession[]; currentId: string; loading: boolean; storageError: string;
     setOpen: (open: boolean) => void; setContext: (context: CanvasAssistantContext | null) => void; addReferences: (ids: string[]) => void;
     removeReference: (id: string) => void; toggleModel: (id: string) => void; setDraft: (draft: string) => void; setModel: (model: string) => void; setSkill: (id?: string) => void;
@@ -86,6 +93,22 @@ function assertProject(context: CanvasAssistantContext, projectId: string, signa
     if (signal.aborted) throw new DOMException("已停止", "AbortError");
     if (useCanvasAssistantStore.getState().context?.snapshot.projectId !== projectId || context.getSnapshot().projectId !== projectId) throw new Error("当前画布已切换，Agent 已停止操作旧画布");
 }
+async function runGeneration(action: AssistantAction, context: CanvasAssistantContext, projectId: string, signal: AbortSignal): Promise<AssistantToolResult> {
+    assertProject(context, projectId, signal);
+    const targets = assistantRunTargets(action, context), outcomes = [];
+    if (!targets.length) throw new Error("Agent 未指定可运行节点");
+    // Validate every target before the first generation request, in either approval mode.
+    const runModes = targets.map(assistantRunMode);
+    for (const [index, node] of targets.entries()) {
+        assertProject(context, projectId, signal);
+        const output = await context.runNode(node.id, runModes[index], node.metadata?.composerContent || node.metadata?.prompt || "", signal);
+        assertProject(context, projectId, signal);
+        const graph = context.getSnapshot();
+        const current = output || graph.nodes.find((item) => item.id === node.id);
+        outcomes.push({ id: node.id, exists: Boolean(current), status: current?.metadata?.status || "idle", error: current?.metadata?.errorDetails, images: current?.metadata?.images?.map((image) => ({ id: image.id, status: image.status, error: image.errorDetails })), hasOutput: Boolean(current?.metadata?.storageKey || current?.metadata?.content || current?.metadata?.images?.some((image) => image.status === "success")) });
+    }
+    return { value: { outcomes, note: "请按真实结果回答，必要时调用 read_results 进一步查看" } };
+}
 async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSession, transcript: AiTextMessage[], controller: AbortController) {
     const { projectId, id } = initial, signal = controller.signal;
     const seen = new Set<string>();
@@ -96,27 +119,27 @@ async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSes
             if (!session) return;
             const config = useConfigStore.getState().config;
             patch(projectId, id, (value) => ({ ...value, running: true, status: "思考中" }));
-            const action = await requestAssistantAction(config, session.model, [{ role: "system", content: assistantSystemPrompt(config, initial.turnModels || initial.models) + (initial.turnSkillPrompt || "") }, ...transcript], signal);
+            const action = await requestAssistantAction(config, session.model, [{ role: "system", content: assistantSystemPrompt(config, initial.turnModels || initial.models, useCanvasAssistantStore.getState().generationMode) + (initial.turnSkillPrompt || "") }, ...transcript], signal);
             assertProject(context, projectId, signal);
             const fingerprint = JSON.stringify({ action, graph: assistantGraphSummary(context.getSnapshot()) });
             if (seen.has(fingerprint)) throw new Error("Agent 重复同一操作且画布没有变化，已停止。请调整要求或更换对话模型后继续。");
             seen.add(fingerprint);
             transcript = [...transcript, { role: "assistant", content: JSON.stringify(action) }];
-            patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly), status: actionName(action) }));
+            patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly), status: action.tool === "run_nodes" && useCanvasAssistantStore.getState().generationMode === "auto" ? "正在生成" : actionName(action) }));
             if (action.tool === "final") { append(projectId, id, "assistant", typeof action.args.message === "string" ? action.args.message : "已完成"); return; }
-            if (action.tool === "run_nodes") {
+            if (action.tool === "run_nodes" && useCanvasAssistantStore.getState().generationMode === "manual") {
                 const targets = assistantRunTargets(action, context);
                 if (!targets.length) throw new Error("Agent 未指定可运行节点");
                 patch(projectId, id, (value) => ({ ...value, pending: action, running: false, status: "等待确认生成" }));
                 return;
             }
             let result: AssistantToolResult;
-            try { result = await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal); }
+            try { result = action.tool === "run_nodes" ? await runGeneration(action, context, projectId, signal) : await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal); }
             catch (error) { if (signal.aborted) throw error; result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
             assertProject(context, projectId, signal);
             transcript = [...transcript, toolMessage(action, result)];
             patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly) }));
-            append(projectId, id, "tool", `${actionName(action)}：${JSON.stringify(result.value)}`);
+            append(projectId, id, "tool", `${action.tool === "run_nodes" ? "生成结果" : actionName(action)}：${JSON.stringify(result.value)}`);
         }
     } catch (error) {
         if (!signal.aborted) append(projectId, id, "error", error instanceof Error ? error.message : String(error));
@@ -126,6 +149,12 @@ async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSes
 }
 
 export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) => ({
+    generationMode: readCanvasAssistantGenerationMode(),
+    setGenerationMode: (mode) => {
+        if (mode !== "manual" && mode !== "auto") return;
+        set({ generationMode: mode });
+        try { localStorage.setItem(generationModeKey, mode); } catch (error) { set({ storageError: `Agent 生成模式保存失败：${String(error)}` }); }
+    },
     open: false, context: null, sessions: [], currentId: "", loading: false, storageError: "",
     setOpen: (open) => set({ open }),
     setContext: (context) => {
@@ -198,17 +227,7 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
         if (!accepted) result = { value: { cancelled: true, note: "用户取消生成，已经建好的节点和连线保留，不要重复请求运行同一批节点。" } };
         else {
             try {
-                const targets = assistantRunTargets(action, context), outcomes = [];
-                const runModes = targets.map(assistantRunMode); // Validate the whole batch before any paid operation can start.
-                for (const [index, node] of targets.entries()) {
-                    assertProject(context, projectId, controller.signal);
-                    const output = await context.runNode(node.id, runModes[index], node.metadata?.composerContent || node.metadata?.prompt || "", controller.signal);
-                    assertProject(context, projectId, controller.signal);
-                    const graph = context.getSnapshot();
-                    const current = output || graph.nodes.find((item) => item.id === node.id);
-                    outcomes.push({ id: node.id, exists: Boolean(current), status: current?.metadata?.status || "idle", error: current?.metadata?.errorDetails, images: current?.metadata?.images?.map((image) => ({ id: image.id, status: image.status, error: image.errorDetails })), hasOutput: Boolean(current?.metadata?.storageKey || current?.metadata?.content || current?.metadata?.images?.some((image) => image.status === "success")) });
-                }
-                result = { value: { outcomes, note: "请按真实结果回答，必要时调用 read_results 进一步查看" } };
+                result = await runGeneration(action, context, projectId, controller.signal);
             } catch (error) { result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
         }
         if (controller.signal.aborted) return;

@@ -1,24 +1,24 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { AtSign, Bot, Box, ChevronDown, Image as ImageIcon, MessageSquare, Minus, Plus, Send, Square, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { AtSign, Bot, Box, ChevronDown, Image as ImageIcon, Maximize2, MessageSquare, Minus, Plus, Send, Square, Trash2, X } from "lucide-react";
+import { Modal } from "antd";
 
 import { CanvasAssistantSkills } from "@/components/agent/canvas-assistant-skills";
+import { CanvasAssistantGenerationMode } from "@/components/agent/canvas-assistant-generation-mode";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { anchorAssistantDock, moveAssistantDock, type AssistantDockLayout } from "@/lib/canvas/assistant-dock-layout";
 import { useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { modelOptionLabel, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useCanvasAssistantStore } from "@/stores/use-canvas-assistant-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
-type DockLayout = { orbX: number; orbY: number; x: number; y: number; height: number };
 const layoutKey = "blinkflow:canvas-assistant-layout";
-function defaultLayout(): DockLayout {
-    return { orbX: Math.max(12, window.innerWidth - 82), orbY: Math.max(70, window.innerHeight - 105), x: Math.max(8, window.innerWidth - 450), y: 80, height: Math.max(260, Math.min(650, window.innerHeight - 110)) };
-}
-function clampLayout(layout: DockLayout): DockLayout {
-    const width = Math.min(420, window.innerWidth - 16), height = Math.max(240, Math.min(layout.height, window.innerHeight - 24));
-    return { orbX: Math.max(8, Math.min(layout.orbX, window.innerWidth - 62)), orbY: Math.max(8, Math.min(layout.orbY, window.innerHeight - 62)), x: Math.max(8, Math.min(layout.x, window.innerWidth - width - 8)), y: Math.max(8, Math.min(layout.y, window.innerHeight - height - 8)), height };
+const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+
+function defaultLayout(): AssistantDockLayout {
+    return anchorAssistantDock({ orbX: Math.max(12, window.innerWidth - 82), orbY: Math.max(70, window.innerHeight - 105), x: 8, y: 8, height: Math.max(260, Math.min(650, window.innerHeight - 110)) }, viewport());
 }
 function initialLayout() {
-    try { const value: unknown = JSON.parse(localStorage.getItem(layoutKey) || "null"); if (value && typeof value === "object" && Object.values(value).every((field) => typeof field === "number" && Number.isFinite(field)) && ["orbX", "orbY", "x", "y", "height"].every((key) => key in value)) return clampLayout(value as DockLayout); } catch { /* Tiny UI preferences must not stop the Agent. */ }
+    try { const value: unknown = JSON.parse(localStorage.getItem(layoutKey) || "null"); if (value && typeof value === "object" && Object.values(value).every((field) => typeof field === "number" && Number.isFinite(field)) && ["orbX", "orbY", "x", "y", "height"].every((key) => key in value)) return anchorAssistantDock(value as AssistantDockLayout, viewport()); } catch { /* Tiny UI preferences must not stop the Agent. */ }
     return defaultLayout();
 }
 const stop = (event: { stopPropagation(): void }) => event.stopPropagation();
@@ -27,16 +27,27 @@ const button = "inline-flex items-center justify-center gap-1 rounded-md px-2 py
 export function CanvasAssistantDock() {
     const store = useCanvasAssistantStore(), config = useConfigStore((state) => state.config), colorTheme = useThemeStore((state) => state.theme), theme = canvasThemes[colorTheme];
     useNodeRegistryVersion((state) => state.version);
-    const [layout, setLayout] = useState(initialLayout), [menu, setMenu] = useState<"mention" | "models" | null>(null), [query, setQuery] = useState(""), [renaming, setRenaming] = useState(false), [name, setName] = useState("");
+    const [layout, setLayout] = useState(initialLayout), [menu, setMenu] = useState<"mention" | "models" | null>(null), [query, setQuery] = useState(""), [renaming, setRenaming] = useState(false), [name, setName] = useState(""), [expanded, setExpanded] = useState(false);
+    const expandedTextarea = useRef<HTMLTextAreaElement>(null);
     const textarea = useRef<HTMLTextAreaElement>(null), end = useRef<HTMLDivElement>(null), currentLayout = useRef(layout), moved = useRef(false), dragCleanup = useRef<(() => void) | null>(null);
     const session = store.sessions.find((item) => item.id === store.currentId), snapshot = store.context?.snapshot;
     currentLayout.current = layout;
     const imageModels = selectableModelsByCapability(config, "image"), videoModels = selectableModelsByCapability(config, "video"), textModels = selectableModelsByCapability(config, "text");
     const modelLabel = (id: string) => modelOptionLabel(config, id);
     const nodeLabel = (id: string) => snapshot?.nodes.find((node) => node.id === id)?.title || id;
-    useEffect(() => { const resize = () => setLayout((value) => clampLayout(value)); window.addEventListener("resize", resize); return () => { window.removeEventListener("resize", resize); dragCleanup.current?.(); }; }, []);
+    useEffect(() => {
+        const resize = () => {
+            const next = anchorAssistantDock(currentLayout.current, viewport());
+            currentLayout.current = next;
+            setLayout(next);
+        };
+        window.addEventListener("resize", resize);
+        return () => { window.removeEventListener("resize", resize); dragCleanup.current?.(); };
+    }, []);
+
     useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [session?.id, session?.messages.length, session?.pending, store.open]);
     useEffect(() => { setMenu(null); setRenaming(false); }, [store.currentId, snapshot?.projectId]);
+    useEffect(() => { setExpanded(false); }, [store.currentId, snapshot?.projectId, store.open]);
     useEffect(() => {
         if (!session || session.model || !textModels.length) return;
         store.setModel(textModels.includes(config.textModel) ? config.textModel : textModels[0]);
@@ -51,7 +62,10 @@ export function CanvasAssistantDock() {
         const onMove = (next: PointerEvent) => {
             const dx = next.clientX - start.x, dy = next.clientY - start.y;
             if (Math.hypot(dx, dy) > 4) moved.current = true;
-            setLayout(clampLayout(mode === "orb" ? { ...start.layout, orbX: start.layout.orbX + dx, orbY: start.layout.orbY + dy } : mode === "resize" ? { ...start.layout, height: start.layout.height + dy } : { ...start.layout, x: start.layout.x + dx, y: start.layout.y + dy }));
+            const nextLayout = moveAssistantDock(start.layout, dx, dy, mode, viewport());
+            // Pointer-up may precede React's next render, so persist the actual final drag.
+            currentLayout.current = nextLayout;
+            setLayout(nextLayout);
         };
         const finish = () => {
             window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); dragCleanup.current = null;
@@ -83,7 +97,7 @@ export function CanvasAssistantDock() {
             {renaming && session && <form className="flex gap-1 px-3 pt-2" onSubmit={(event) => { event.preventDefault(); store.renameSession(session.id, name); setRenaming(false); }}><input aria-label="对话名称" autoFocus value={name} onChange={(event) => setName(event.target.value)} className="min-w-0 flex-1 text-xs" style={inputStyle} /><button type="submit" className={button}>保存</button><button type="button" className={button} onClick={() => setRenaming(false)}>取消</button></form>}
             <main className="min-h-0 flex-1 space-y-3 overflow-auto px-3 py-3" data-node-scroll>
                 {store.loading && <p className="text-xs" style={{ color: theme.node.muted }}>正在读取会话…</p>}
-                {!store.loading && !session?.messages.length && <p className="py-6 text-center text-xs leading-6" style={{ color: theme.node.muted }}>描述你的创意，Agent 会把工作流建到画布。<br />选择节点可添加为素材；生成前会让你确认。</p>}
+                {!store.loading && !session?.messages.length && <p className="py-6 text-center text-xs leading-6" style={{ color: theme.node.muted }}>描述你的创意，Agent 会把工作流建到画布。<br />选择节点可添加为素材；{store.generationMode === "auto" ? "自动生成模式会直接执行生成。" : "生成前会让你确认。"}</p>}
                 {session?.messages.map((message) => <article key={message.id} className="rounded-lg p-2 text-xs leading-6" style={{ background: message.role === "user" ? theme.toolbar.activeBg : "transparent", border: message.role === "error" ? `1px solid ${theme.node.stroke}` : undefined }}>
                     <div className="mb-1 text-[10px]" style={{ color: theme.node.muted }}>{message.role === "user" ? "你" : message.role === "tool" ? "工具" : message.role === "error" ? "执行提示" : "Agent"}</div>
                     {message.role === "tool" ? <details><summary className="cursor-pointer" style={{ color: theme.node.muted }}>{message.text.split("：")[0]}</summary><pre className="whitespace-pre-wrap break-all font-sans">{message.text}</pre></details> : <p className="whitespace-pre-wrap break-words">{message.text}</p>}
@@ -103,7 +117,9 @@ export function CanvasAssistantDock() {
                         <button type="button" className={button} aria-label="添加选中节点到 Agent" title="添加选中节点" disabled={!snapshot?.selectedNodeIds.length} onClick={() => store.addReferences(snapshot?.selectedNodeIds || [])}><Plus size={15} /></button>
                         <button type="button" data-assistant-mention className={button} aria-label="引用节点或模型" title="@ 节点 / 模型" onClick={() => { setMenu(menu === "mention" ? null : "mention"); setQuery(""); }}><AtSign size={16} /></button>
                         <button type="button" data-assistant-models className={button} aria-label="图片和视频生成模型" title="选择生成模型" onClick={() => { setMenu(menu === "models" ? null : "models"); setQuery(""); }}><Box size={16} /></button>
-                        <span className="min-w-0 flex-1 truncate text-[10px]" style={{ color: theme.node.muted }}>{session?.status || "手动确认生成"}</span>
+                        <button type="button" className={button} aria-label="全屏编辑 Agent 输入" title="全屏查看 / 编辑文字" disabled={!session} onClick={() => { setMenu(null); setExpanded(true); }}><Maximize2 size={15} /></button>
+                        <CanvasAssistantGenerationMode />
+                        <span className="min-w-0 flex-1 truncate text-[10px]" style={{ color: theme.node.muted }} title={session?.status}>{session?.status}</span>
                         {session?.running ? <button type="button" className={button} aria-label="停止 Agent" onClick={store.stop}><Square size={16} /></button> : <button type="button" className={button} aria-label="发送 Agent 消息" disabled={!session || Boolean(session.pending) || (!session.draft.trim() && !session.references.length)} onClick={() => void store.send()}><Send size={17} /></button>}
                     </div>
                     {menu && <div data-canvas-overlay data-canvas-no-zoom data-assistant-menu role="dialog" aria-label={menu === "mention" ? "引用节点和模型" : "选择生成模型"} className="absolute bottom-full left-0 z-10 mb-2 w-full overflow-auto rounded-xl border p-2" style={{ maxHeight: Math.max(180, layout.height - 210), background: theme.node.panel, borderColor: theme.node.stroke, boxShadow: "0 8px 24px rgba(0,0,0,.15)" }}>
@@ -115,5 +131,21 @@ export function CanvasAssistantDock() {
             </div>
             <button type="button" aria-label="调整 Agent 浮窗高度" title="上下拖动调整高度" className="mx-auto h-3 w-16 cursor-ns-resize" style={{ touchAction: "none" }} onPointerDown={(event) => drag(event, "resize")}><span className="mx-auto block h-1 w-8 rounded" style={{ background: theme.node.stroke }} /></button>
         </section>
+        <Modal
+            title="Agent 全屏编辑"
+            open={expanded && store.open && Boolean(session)}
+            width="100vw"
+            style={{ top: 0, margin: 0, paddingBottom: 0, maxWidth: "100vw", height: "100dvh" }}
+            styles={{ container: { display: "flex", flexDirection: "column", height: "100%", borderRadius: 0, background: theme.node.panel, color: theme.node.text }, header: { background: "transparent" }, title: { color: theme.node.text }, close: { color: theme.node.text }, body: { display: "flex", flexDirection: "column", minHeight: 0, flex: 1 } }}
+            wrapProps={{ "data-canvas-overlay": true, "data-canvas-no-zoom": true, "data-canvas-shortcuts-ignore": true, "data-assistant-editor": true, onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => { if (event.key === "Escape" && !event.nativeEvent.isComposing) { event.preventDefault(); setExpanded(false); } event.stopPropagation(); } }}
+            footer={<button type="button" className={button} onClick={() => setExpanded(false)}>完成编辑</button>}
+            onCancel={() => setExpanded(false)}
+            afterOpenChange={(open) => { if (open) expandedTextarea.current?.focus(); }}
+            destroyOnHidden
+        >
+            <p className="mb-3 text-xs" style={{ color: theme.node.muted }}>{session?.running || session?.pending ? "任务进行中，仅查看当前输入。" : "修改实时保留，Enter 换行；关闭后回到输入框，不会发送。"}</p>
+            {/* Share the session draft directly: closing or Escape cannot discard edits or send a request. */}
+            <textarea ref={expandedTextarea} data-assistant-expanded-prompt aria-label="Agent 全屏输入文字" className="thin-scrollbar min-h-0 w-full flex-1 resize-none rounded-xl border p-4 text-base leading-7 outline-none" style={{ background: "transparent", borderColor: theme.node.stroke, color: theme.node.text }} value={session?.draft || ""} readOnly={!session || session.running || Boolean(session.pending)} onChange={(event) => store.setDraft(event.target.value)} placeholder="在这里查看和编辑完整输入文字" />
+        </Modal>
     </div>;
 }

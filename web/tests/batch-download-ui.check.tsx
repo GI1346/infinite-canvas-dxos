@@ -16,17 +16,18 @@ async function fire(target: EventTarget, event: Event) { await act(async () => {
 const click = (target: EventTarget) => fire(target, new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
 const node = (id: string, type: string, metadata = {}): CanvasNodeData => ({ id, type, title: `重命名-${id}`, position: { x: 100, y: 150 }, width: 300, height: 240, metadata });
 const toolbarProps = { viewport: { x: 0, y: 0, k: 1 }, onKeep: no, onLeave: no, onInfo: no, onDecreaseFont: no, onIncreaseFont: no, onToggleDialog: no, onGenerateImage: no, onUpload: no, onDownload: no, onSaveAsset: no, onPaint: no, onMaskEdit: no, onCrop: no, onSplit: no, onUpscale: no, onSuperResolve: no, onAngle: no, onViewImage: no, onReversePrompt: no, onRetry: no, onToggleFreeResize: no, onDelete: no, onUngroup: no };
-const saved: { blob: Blob; name: string }[] = [], reads: string[] = [], blobs = new Map<string, Blob>();
+const saved: { blob: Blob; name: string }[] = [], reads: string[] = [], blobs = new Map<string, Blob>(), fetches: string[] = [], remotes = new Map<string, Blob>();
 let readBlob = async (key: string): Promise<Blob | null> => { reads.push(key); return blobs.get(key) || null; };
 (globalThis as any).__downloadSave = (blob: Blob, name: string) => { saved.push({ blob, name }); };
 (globalThis as any).__downloadBlob = (key: string) => readBlob(key);
+(globalThis as any).__downloadFetch = async (url: string) => { fetches.push(url); const blob = remotes.get(url); if (!blob) throw new Error("Offline test refused URL: " + url); return blob; };
 
 async function main() {
     const group = node("group", "group"), sub = node("sub", "group", { groupId: group.id }), a = node("A", "image", { groupId: group.id, status: "success", storageKey: "image:a" }), b = node("B", "image", { groupId: sub.id, status: "success", storageKey: "image:b" }), text = node("text", "text", { content: "hello" }), empty = node("empty", "group");
     const nodes = [group, sub, a, b, text, empty]; blobs.set("image:a", new Blob(["original-a"], { type: "image/png" })); blobs.set("image:b", new Blob(["original-b"], { type: "image/jpeg" }));
-    let renderMode!: (mode: string) => void, externalDownload!: () => Promise<void>, parentEvents = 0;
+    let renderMode!: (mode: string) => void, externalDownload!: () => Promise<void>, externalSingle!: (node: CanvasNodeData, imageId?: string) => Promise<void>, parentEvents = 0;
     function Harness() {
-        const [mode, setMode] = useState("selection"), { downloading, downloadImages } = useCanvasImageDownload(); renderMode = setMode;
+        const [mode, setMode] = useState("selection"), { downloading, downloadImages, downloadImage } = useCanvasImageDownload(); renderMode = setMode; externalSingle = downloadImage;
         const ids = mode === "empty" ? [empty.id] : mode === "selection" ? [a.id, b.id] : [group.id, sub.id, a.id];
         const start = () => downloadImages(ids, nodes, mode === "selection" ? undefined : mode === "empty" ? empty.title : group.title); externalDownload = start;
         return <div onPointerDown={() => parentEvents++} onMouseDown={() => parentEvents++}>
@@ -67,12 +68,61 @@ async function main() {
             const source = readFileSync("src/pages/canvas/project.tsx", "utf8"), storage = readFileSync("src/services/image-storage.ts", "utf8");
             assert.ok(source.includes("onBatchDownload={(node) => void downloadImages([node.id], nodesRef.current, node.title || \"分组图片\")}"));
             assert.ok(source.includes("onDownload={() => void downloadImages(selectedNodeIdsRef.current, nodesRef.current)}")); assert.ok(source.includes("downloading={batchDownloading}"));
+            assert.ok(source.includes("if (node.type === CanvasNodeType.Image) return downloadImage(node);")); assert.ok(source.includes("=> downloadImage(node, imageId), [downloadImage])"));
             assert.ok(storage.includes("export async function fetchImageBlob(")); assert.ok(storage.includes("fetch(withLocalProxy(url), { signal: controller.signal })"));
         });
         await test("桌面批量保存选目录、原图字节传入且取消不回退默认路径", async () => {
             await mode("group"); let calls = 0;
             window.blinkflowDownloads = { saveImages: async (files) => { calls++; assert.deepEqual(files.map(f => f.name).sort(), ["重命名-A.png", "重命名-B.jpg"]); assert.equal(new TextDecoder().decode(files[0].data), "original-a"); return { canceled: true, count: 0 }; } };
             const count = saved.length; await click(button()); assert.equal(calls, 1); assert.equal(saved.length, count); delete window.blinkflowDownloads;
+        });
+        await test("单图工具栏点击即下载一张原图；storageKey优先，失效预览URL不阻断下载", async () => {
+            const image = node("单图", "image", { status: "success", storageKey: "image:a", content: "blob:expired-preview", mimeType: "image/jpeg" });
+            let calls = 0, canvasPointer = 0; const count = saved.length, beforeFetch = fetches.length;
+            window.blinkflowDownloads = { saveImages: async (files) => { calls++; assert.equal(files.length, 1); assert.equal(files[0].name, "重命名-单图.png"); assert.equal(new TextDecoder().decode(files[0].data), "original-a"); return { canceled: false, count: 1 }; } };
+            const ownHost = document.createElement("div"); document.body.append(ownHost); const ownRoot = createRoot(ownHost);
+            await act(async () => { ownRoot.render(<ConfigProvider><div onPointerDown={() => canvasPointer++} onMouseDown={() => canvasPointer++}><CanvasNodeHoverToolbar {...toolbarProps} node={image} onDownload={() => void externalSingle(image)} /></div></ConfigProvider>); await tick(); });
+            try {
+                const download = ownHost.querySelector<HTMLButtonElement>('[aria-label="下载图片"]'); assert.ok(download, ownHost.innerHTML);
+                await fire(download, new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 })); await fire(download, new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })); await fire(download, new PointerEvent("pointerup", { bubbles: true, cancelable: true, button: 0 })); await fire(download, new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 })); await click(download); assert.equal(canvasPointer, 0); assert.equal(calls, 1); assert.equal(fetches.length, beforeFetch); assert.equal(saved.length, count);
+            } finally { await act(async () => ownRoot.unmount()); ownHost.remove(); delete window.blinkflowDownloads; }
+        });
+        await test("单张生成批次只保存所点图片，使用节点重命名、原始序号与真实MIME", async () => {
+            const image = node("Batch", "image", { status: "success", content: "blob:primary", storageKey: "image:a", images: [{ id: "first", status: "success", content: "blob:primary", storageKey: "image:a" }, { id: "second", status: "success", content: "blob:expired-second", storageKey: "image:b" }] });
+            const count = saved.length; await act(async () => { await externalSingle(image, "second"); });
+            assert.equal(saved.length, count + 1); assert.equal(saved.at(-1)!.name, "重命名-Batch-2.jpg"); assert.equal(saved.at(-1)!.blob.type, "image/jpeg"); assert.equal(await saved.at(-1)!.blob.text(), "original-b");
+            await act(async () => { await externalSingle(image, "missing"); }); assert.equal(saved.length, count + 1);
+        });
+        await test("单图浏览器选目录写原图，不走ZIP；无目录选择器可选另存位置", async () => {
+            const image = node("A", "image", { content: "blob:expired", storageKey: "image:a" });
+            let name = "", data: Blob | null = null, closed = 0;
+            const writer = { write: async (blob: Blob) => { data = blob; }, close: async () => { closed++; } };
+            (window as any).showDirectoryPicker = async () => ({ getFileHandle: async (value: string) => { name = value; return { createWritable: async () => writer }; } });
+            const count = saved.length;
+            try { await act(async () => { await externalSingle(image); }); assert.equal(name, "重命名-A.png"); assert.equal(await data!.text(), "original-a"); assert.equal(closed, 1); assert.equal(saved.length, count); }
+            finally { delete (window as any).showDirectoryPicker; }
+            name = ""; data = null;
+            (window as any).showSaveFilePicker = async (options: { suggestedName: string }) => { name = options.suggestedName; return { createWritable: async () => writer }; };
+            try { await act(async () => { await externalSingle(image); }); assert.equal(name, "重命名-A.png"); assert.equal(await data!.text(), "original-a"); assert.equal(closed, 2); assert.equal(saved.length, count); }
+            finally { delete (window as any).showSaveFilePicker; }
+        });
+        await test("单图URL通过原图读取通道转Blob，读取失败有提示，取消不回退下载", async () => {
+            const url = "https://download.invalid/original", image = node("URL", "image", { content: url }); remotes.set(url, new Blob(["remote-original"], { type: "image/webp" }));
+            const count = saved.length; await act(async () => { await externalSingle(image); }); assert.equal(saved.length, count + 1); assert.equal(saved.at(-1)!.name, "重命名-URL.webp"); assert.equal(await saved.at(-1)!.blob.text(), "remote-original"); assert.equal(fetches.at(-1), url);
+            await act(async () => { await externalSingle(node("Missing", "image", { storageKey: "missing-original", content: "blob:missing" })); }); assert.equal(saved.length, count + 1); assert.ok(document.body.textContent?.includes("1 张图片缺失或读取失败"));
+            (window as any).showDirectoryPicker = async () => { throw new DOMException("Canceled", "AbortError"); };
+            try { const before = reads.length; await act(async () => { await externalSingle(a); }); assert.equal(reads.length, before); assert.equal(saved.length, count + 1); }
+            finally { delete (window as any).showDirectoryPicker; }
+            window.blinkflowDownloads = { saveImages: async (files) => { assert.equal(files.length, 1); return { canceled: true, count: 0 }; } };
+            try { await act(async () => { await externalSingle(a); }); assert.equal(saved.length, count + 1); }
+            finally { delete window.blinkflowDownloads; }
+        });
+        await test("单图与批量共享忙状态，连点只保存一次且不会修改节点数据", async () => {
+            const snapshot = JSON.stringify(nodes), count = saved.length, original = readBlob; let release!: () => void;
+            const wait = new Promise<void>((resolve) => { release = resolve; }); readBlob = async (key) => { await wait; return original(key); };
+            await act(async () => { void externalSingle(a); void externalSingle(a); void externalDownload(); });
+            await act(async () => { release(); await tick(30); }); readBlob = original;
+            assert.equal(saved.length, count + 1); assert.equal(saved.at(-1)!.name, "重命名-A.png"); assert.equal(JSON.stringify(nodes), snapshot);
         });
         console.log(`Batch download UI: ${passed}/${passed} passed (real React/Ant UI, real ZIP bytes, original image I/O and save dialog mocked)`);
     } finally { await act(async () => root.unmount()); host.remove(); }

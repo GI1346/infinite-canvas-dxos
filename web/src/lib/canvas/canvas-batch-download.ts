@@ -25,9 +25,13 @@ export function collectDownloadImages(selectedIds: Iterable<string>, nodes: Canv
 }
 
 export async function collectCanvasImageFiles(selectedIds: Iterable<string>, nodes: CanvasNodeData[]) {
+    return readCanvasImageFiles(collectDownloadImages(selectedIds, nodes));
+}
+
+export async function readCanvasImageFiles(images: DownloadImage[]) {
     const files: { name: string; data: Blob }[] = [], used = new Set<string>();
     let skipped = 0;
-    for (const image of collectDownloadImages(selectedIds, nodes)) {
+    for (const image of images) {
         try {
             const stored = image.storageKey ? await getImageBlob(image.storageKey).catch(() => null) : null;
             const blob = stored || (image.content ? await fetchImageBlob(image.content) : null);
