@@ -24,7 +24,7 @@ function textFile(name: string, content: string, path = "") { const file = new F
 const draft: AssistantSkillDraft = { name: "独立测试技能", description: "测试说明", content: "先读取素材，再创建真实工作流。", inputMode: "any", tags: [" 测试 ", "测试"] };
 async function main() {
     await db.clear(); store.setState({ skills: [], favorites: [], loading: false, loaded: false, error: "" });
-    assert.equal(builtins.length, 13); assert.equal(new Set(builtins.map((item) => item.id)).size, 13); assert.equal(new Set(builtins.map((item) => item.name)).size, 13);
+    assert.equal(builtins.length, 14); assert.equal(new Set(builtins.map((item) => item.id)).size, 14); assert.equal(new Set(builtins.map((item) => item.name)).size, 14);
     for (const item of builtins) { validate(item); assert.equal(item.source, "builtin"); assert(item.id.startsWith("builtin:")); assert(item.content.length > 30); }
     const warm = builtins.find((item) => item.id === "builtin:warm-french-album")!;
     const warmRaw = readFileSync("src/lib/canvas/skills/warm-french-album.md", "utf8").replace(/\r\n/g, "\n");
@@ -47,7 +47,7 @@ async function main() {
     assert.equal(parse("正文", "随手写.txt").name, "随手写"); assert.equal(parse("---\ninputMode: invalid\n---\n正文", "fallback.markdown").inputMode, "any");
     assert.throws(() => parse("---\nname: 空白\n---\n  ", "empty.md"), /正文为空/); assert.throws(() => validate({ ...draft, name: " " }), /名称/);
     const script = 'globalThis.__skillShouldNotRun = true; <script>alert("x")</script>'; assert.equal(parse(script, "script.md").content, script); assert.equal((globalThis as any).__skillShouldNotRun, undefined);
-    console.log("PASS 13 unique builtins, advanced Skill exact body/hash and 10 sections, BOM/CRLF/frontmatter/plain-text parsing, validation and system-prompt content; text never executes.");
+    console.log("PASS 14 unique builtins, advanced Skill exact body/hash and 10 sections, BOM/CRLF/frontmatter/plain-text parsing, validation and system-prompt content; text never executes.");
     await Promise.all([load(), load()]); assert(state().loaded); assert.deepEqual(state().skills, []);
     await assert.rejects(() => state().saveSkill({ ...draft, content: " " }), /正文为空/);
     const saved = await state().saveSkill(draft); assert(saved.id.startsWith("user:")); assert.deepEqual(saved.tags, ["测试"]);
@@ -86,6 +86,6 @@ async function main() {
     await click(button("Skill", host)); await fire(popup()!, new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })); assert.equal(popup(), null); await click(button("Skill", host)); await fire(document.body, new PointerEvent("pointerdown", { bubbles: true, button: 0 })); assert.equal(popup(), null);
     await click(button("Skill", host)); await act(async () => useThemeStore.setState({ theme: "dark" })); const color = document.createElement("span"); color.style.color = canvasThemes.dark.node.text; assert.equal(popup()!.style.color, color.style.color); await act(async () => root.render(<Harness disabled />)); assert.equal(popup(), null); assert(button("Skill", host).disabled); document.removeEventListener("pointerdown", count); document.removeEventListener("wheel", count); document.removeEventListener("keydown", count);
     console.log("PASS DOM menu, favorite, builtin readonly/copy, search, selection/chip removal, portal z280, canvas event isolation, Escape/outside close, dark theme and disabled state.");
-    await act(async () => root.unmount()); host.remove(); await clearAssistantSkills(); assert.deepEqual(state().skills, []); assert.deepEqual(state().favorites, []); assert.equal(builtins.length, 13); assert.deepEqual((await db.getItem<any>("catalog")).skills, []); console.log("PASS cleanup clears user Skill/favorites and retains application builtins.");
+    await act(async () => root.unmount()); host.remove(); await clearAssistantSkills(); assert.deepEqual(state().skills, []); assert.deepEqual(state().favorites, []); assert.equal(builtins.length, 14); assert.deepEqual((await db.getItem<any>("catalog")).skills, []); console.log("PASS cleanup clears user Skill/favorites and retains application builtins.");
 }
 main().then(() => { console.log("ALL CANVAS ASSISTANT SKILL CHECKS PASSED"); process.exit(0); }).catch(async (error) => { console.error(error); await act(async () => root.unmount()); host.remove(); process.exit(1); });
