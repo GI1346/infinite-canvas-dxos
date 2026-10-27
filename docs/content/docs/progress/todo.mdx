@@ -5,6 +5,8 @@ description: Planned follow-up work
 
 # TODO
 
+- 已有结果分支生成及移除行为切换已实现并纳入 0.20.12；具体变化与未执行的验收见 [Pending Tests](/docs/progress/pending-test)，不改独立渠道配置与异步任务边界。
+
 - 「亚马逊英文终极版」Skill 已内置并纳入 0.20.11；按用户要求本次不执行测试，实际变更见 [Pending Tests](/docs/progress/pending-test)。
 
 - Agent 全屏编辑、图片展示尺寸、单图保存及「暖调法式复古长条画册版」Skill 已实现并纳入 0.20.10，验收见 Pending Tests；发布附件与本地最新版须通过当次包体及远端 SHA256 校验。
@@ -20,6 +22,6 @@ description: Planned follow-up work
 - 0.20.5 鼠标浮层修复及此前发布的验收继续保留在 Pending Tests，均为历史证据，不替代当前包验收；物理浏览器 Alt 拖动和正式注册覆盖安装仍未宣称通过。
 - Keep the previous known-good installer until the replacement asset and checksum are verified, then retain one newest local installer; never upload API keys or user data.
 - Installer follow-up: actual overwrite installation and native-window visual acceptance are not claimed. The package was built, extracted byte-for-byte, and its production resources verified at 17456 without replacing the existing registered app. Tests and package checks are in [Pending Tests](/docs/progress/pending-test). Keep appId/userData/origin for upgrades.
-- Implemented behavior stays in Pending Tests until confirmation rather than being prematurely moved into the confirmed feature guide. Earlier version sections are historical; this working release targets v0.20.11.
+- Implemented behavior stays in Pending Tests until confirmation rather than being prematurely moved into the confirmed feature guide. Earlier version sections are historical; this working release targets v0.20.12.
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

@@ -1,3 +1,4 @@
+import { createGenerationBranch } from "@/lib/canvas/canvas-generation-branch";
 import { isCanvasNodeVisible } from "@/lib/canvas/canvas-visibility";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
@@ -2543,11 +2544,26 @@ function InfiniteCanvasPage() {
             const updateDialogNodeId = guardGenerationSetter(setDialogNodeId, active);
             const updateExpandedBatchNodeIds = guardGenerationSetter(setExpandedBatchNodeIds, active);
             assertActive();
-            const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
+            let sourceNode = nodesRef.current.find((node) => node.id === nodeId);
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
+            }
+
+            const originalSourceNode = sourceNode;
+            const branch = createGenerationBranch(sourceNode, nodesRef.current, connectionsRef.current, generationConfig, mode, prompt);
+            if (branch) {
+                // Publish refs synchronously before resolving context; React may defer its state update.
+                nodesRef.current = [...nodesRef.current, branch.node];
+                connectionsRef.current = [...connectionsRef.current, ...branch.connections];
+                setNodes(nodesRef.current);
+                setConnections(connectionsRef.current);
+                nodeId = branch.node.id;
+                sourceNode = branch.node;
+                setSelectedNodeIds(new Set([nodeId]));
+                setSelectedConnectionId(null);
+                setDialogNodeId(nodeId);
             }
 
             // useBuiltinPanel.writeBackToSelf reuses built-in generation while writing the result back to the plugin node.
@@ -2590,22 +2606,40 @@ function InfiniteCanvasPage() {
 
             const controllerForRun = beginRun();
             updateRunningNodeId(nodeId);
-            const overwriteExisting = effectiveConfig.nodeRegenerateBehavior === "overwrite";
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
             let pendingChildIds: string[] = [];
-            let markSourceStatus = false;
+            let markSourceStatus = Boolean(branch);
             try {
-                const generationContext = await hydrateNodeGenerationContext(
-                    buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt),
-                );
+                const context = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt);
+                if (branch && originalSourceNode) {
+                    // Prefer current direct inputs; Config-generated outputs also retain their original multimodal inputs.
+                    const configSource = findRetrySourceNode(originalSourceNode.id, nodesRef.current, connectionsRef.current);
+                    const inputSource = configSource || originalSourceNode;
+                    const inheritedContext = buildNodeGenerationContext(inputSource.id, nodesRef.current, connectionsRef.current, inputSource.metadata?.composerContent ?? inputSource.metadata?.prompt ?? "");
+                    if (!context.referenceImages.length) context.referenceImages = branch.savedImageInputs ? (await resolveMetadataReferences(originalSourceNode.metadata!) ?? inheritedContext.referenceImages) : inheritedContext.referenceImages;
+                    else if (!branch.savedImageInputs) context.referenceImages = [...new Map([...context.referenceImages, ...inheritedContext.referenceImages].map((image) => [image.id, image])).values()];
+                    if (!context.referenceVideos.length) context.referenceVideos = inheritedContext.referenceVideos;
+                    if (!context.referenceAudios.length) context.referenceAudios = inheritedContext.referenceAudios;
+                    context.imageCount = context.referenceImages.length;
+                    context.videoCount = context.referenceVideos.length;
+                    context.audioCount = context.referenceAudios.length;
+                    // Only unchanged, already-expanded prompts skip upstream text; new edits still receive direct text inputs.
+                    if (prompt === originalSourceNode.metadata?.prompt) context.prompt = prompt;
+                    else if (configSource && !context.textCount && inheritedContext.textCount) {
+                        const textStart = inheritedContext.prompt.indexOf("\n\n【");
+                        if (textStart >= 0) context.prompt += inheritedContext.prompt.slice(textStart);
+                    }
+                    if (originalSourceNode.metadata?.generationType === "edit" && !context.referenceImages.length) throw new Error(t("canvas.projectPage.referenceMissing"));
+                }
+                const generationContext = await hydrateNodeGenerationContext(context);
                 const effectivePrompt = generationContext.prompt.trim();
                 if (!active()) {
                     endRun();
                     updateRunningNodeId((current) => current === nodeId ? null : current);
                     return;
                 }
-                markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
+                markSourceStatus = Boolean(branch) || (sourceNode?.type !== CanvasNodeType.Image && !editingTextNode);
                 if (!effectivePrompt && (mode === "text" || mode === "audio")) {
                     endRun();
                     updateRunningNodeId((current) => current === nodeId ? null : current);
@@ -2618,14 +2652,14 @@ function InfiniteCanvasPage() {
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
-                    const reuseImageNode = isImageNode && (overwriteExisting || isEmptyImageNode);
+                    const reuseImageNode = isImageNode && isEmptyImageNode;
                     const sourceReference =
-                        isImageNode && sourceNode?.metadata?.content && !overwriteExisting
+                        isImageNode && sourceNode?.metadata?.content
                             ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
                             : [];
                     const referenceImages = [...new Map([...sourceReference, ...generationContext.referenceImages].map((image) => [image.id, image])).values()];
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), cropContext: imageOutputCropContext(referenceImages, nodesRef.current, connectionsRef.current) };
+                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), cropContext: imageOutputCropContext(referenceImages, nodesRef.current, connectionsRef.current) || sourceNode?.metadata?.cropContext };
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -2635,7 +2669,7 @@ function InfiniteCanvasPage() {
                     const rootNode: CanvasNodeData = {
                         id: rootId,
                         type: CanvasNodeType.Image,
-                        title: effectivePrompt.slice(0, 32) || "Generated Image",
+                        title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Image",
                         position: {
                             x: reuseImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + 96,
                             y: parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2,
@@ -2763,13 +2797,13 @@ function InfiniteCanvasPage() {
                 if (mode === "video") {
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
-                    const reuseVideoNode = sourceNode?.type === CanvasNodeType.Video && (overwriteExisting || isEmptyVideoNode);
+                    const reuseVideoNode = sourceNode?.type === CanvasNodeType.Video && isEmptyVideoNode;
                     const videoId = reuseVideoNode ? nodeId : nanoid();
                     const parent = sourceNode?.position || { x: 0, y: 0 };
                     const videoNode: CanvasNodeData = {
                         id: videoId,
                         type: CanvasNodeType.Video,
-                        title: effectivePrompt.slice(0, 32) || "Generated Video",
+                        title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Video",
                         position: reuseVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
                         width: reuseVideoNode ? sourceNode.width : spec.width,
                         height: reuseVideoNode ? sourceNode.height : spec.height,
@@ -2789,7 +2823,7 @@ function InfiniteCanvasPage() {
                     pendingChildIds = [videoId];
                     updateNodes((prev) =>
                         reuseVideoNode
-                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node))
+                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode, metadata: { ...node.metadata, ...videoNode.metadata } } : node))
                             : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode],
                     );
                     if (!reuseVideoNode) updateConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
@@ -2813,13 +2847,13 @@ function InfiniteCanvasPage() {
                 if (mode === "audio") {
                     const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
                     const isEmptyAudioNode = sourceNode?.type === CanvasNodeType.Audio && !sourceNode.metadata?.content;
-                    const reuseAudioNode = sourceNode?.type === CanvasNodeType.Audio && (overwriteExisting || isEmptyAudioNode);
+                    const reuseAudioNode = sourceNode?.type === CanvasNodeType.Audio && isEmptyAudioNode;
                     const audioId = reuseAudioNode ? nodeId : nanoid();
                     const parent = sourceNode?.position || { x: 0, y: 0 };
                     const audioNode: CanvasNodeData = {
                         id: audioId,
                         type: CanvasNodeType.Audio,
-                        title: effectivePrompt.slice(0, 32) || "Generated Audio",
+                        title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Audio",
                         position: reuseAudioNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
                         width: reuseAudioNode ? sourceNode.width : spec.width,
                         height: reuseAudioNode ? sourceNode.height : spec.height,
@@ -2828,7 +2862,7 @@ function InfiniteCanvasPage() {
                     pendingChildIds = [audioId];
                     updateNodes((prev) =>
                         reuseAudioNode
-                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node))
+                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode, metadata: { ...node.metadata, ...audioNode.metadata } } : node))
                             : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
                     );
                     if (!reuseAudioNode) updateConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
@@ -2851,20 +2885,20 @@ function InfiniteCanvasPage() {
                 const textConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
                 const parentPosition = sourceNode?.position || { x: 0, y: 0 };
                 const isEmptyTextNode = sourceNode?.type === CanvasNodeType.Text && !sourceTextContent;
-                const reuseTextNode = sourceNode?.type === CanvasNodeType.Text && (overwriteExisting || isEmptyTextNode);
+                const reuseTextNode = sourceNode?.type === CanvasNodeType.Text && isEmptyTextNode;
                 const rootId = reuseTextNode ? nodeId : nanoid();
                 const textIds = Array.from({ length: textCount }, () => nanoid());
                 const rootNode: CanvasNodeData = {
                     id: rootId,
                     type: CanvasNodeType.Text,
-                    title: effectivePrompt.slice(0, 32) || "Generated Text",
+                    title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Text",
                     position: reuseTextNode ? sourceNode.position : { x: parentPosition.x + parentConfig.width + 96, y: parentPosition.y + parentConfig.height / 2 - textConfig.height / 2 },
                     width: reuseTextNode ? sourceNode.width : textConfig.width,
                     height: reuseTextNode ? sourceNode.height : textConfig.height,
                     metadata: {
                         prompt: effectivePrompt,
                         status: NODE_STATUS_LOADING,
-                        fontSize: 14,
+                        fontSize: sourceNode?.metadata?.fontSize || 14,
                         model: generationConfig.model,
                         reasoningEffort: generationConfig.reasoningEffort,
                         textCount,
@@ -2875,7 +2909,7 @@ function InfiniteCanvasPage() {
                 pendingChildIds = [rootId];
                 updateNodes((prev) =>
                     reuseTextNode
-                        ? prev.map((node) => (node.id === nodeId ? { ...node, ...rootNode } : node))
+                        ? prev.map((node) => (node.id === nodeId ? { ...node, ...rootNode, metadata: { ...node.metadata, ...rootNode.metadata } } : node))
                         : [...prev.map((node) => (node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)), rootNode],
                 );
                 if (!reuseTextNode) updateConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]);
