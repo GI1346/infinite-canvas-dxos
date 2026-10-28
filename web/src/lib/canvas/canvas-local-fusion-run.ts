@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
-import { LOCAL_FUSION_NODE_TYPE, fuseImageNodes, fusionInputs, resolveCropContext } from "@/lib/canvas/canvas-local-fusion";
+import { LOCAL_FUSION_NODE_TYPE, fuseImageNodes, fusionInputs, resolveFusionCropContext } from "@/lib/canvas/canvas-local-fusion";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 export type LocalFusionSnapshot = { projectId?: string; nodes: CanvasNodeData[]; connections: CanvasConnection[] };
@@ -15,7 +15,7 @@ export function isLocalFusionRunning() { return running.size > 0; }
 function signature(nodeId: string, snapshot: LocalFusionSnapshot) {
     const source = snapshot.nodes.find((node) => node.id === nodeId);
     const inputs = fusionInputs(nodeId, snapshot.nodes, snapshot.connections);
-    const input = (node: CanvasNodeData) => [node.id, node.type, node.metadata?.storageKey, node.metadata?.content, node.metadata?.naturalWidth, node.metadata?.naturalHeight, node.metadata?.cropContext, resolveCropContext(node.id, snapshot.nodes, snapshot.connections)];
+    const input = (node: CanvasNodeData) => [node.id, node.type, node.metadata?.storageKey, node.metadata?.content, node.metadata?.naturalWidth, node.metadata?.naturalHeight, node.metadata?.cropContext, resolveFusionCropContext(node.id, inputs.originals[0], snapshot.nodes, snapshot.connections)];
     return JSON.stringify([snapshot.projectId, source?.type, source?.metadata?.fusionColorMatch !== false, inputs.originals.map(input), inputs.patches.map(input)]);
 }
 

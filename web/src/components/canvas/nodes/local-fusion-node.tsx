@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Blend, Image as ImageIcon } from "lucide-react";
 import { stopWorkflowControlDrag } from "@/components/canvas/workflow-node-interactions";
 import { runLocalFusionNode } from "@/lib/canvas/canvas-local-fusion-run";
-import { FUSION_PATCH_PORT, LOCAL_FUSION_NODE_TYPE, fusionInputs, resolveCropContext } from "@/lib/canvas/canvas-local-fusion";
+import { FUSION_PATCH_PORT, LOCAL_FUSION_NODE_TYPE, fusionInputs, resolveFusionCropContext } from "@/lib/canvas/canvas-local-fusion";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
 
 export function LocalFusionContent({ ctx }: { ctx: CanvasNodeContext }) {
@@ -11,9 +11,9 @@ export function LocalFusionContent({ ctx }: { ctx: CanvasNodeContext }) {
     const [running, setRunning] = useState(false), [error, setError] = useState("");
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
     const nodes = ctx.getNodes(), connections = ctx.getConnections(), inputs = fusionInputs(node.id, nodes, connections);
-    const original = inputs.originals[0], invalid = inputs.patches.find((patch) => resolveCropContext(patch.id, nodes, connections).kind !== "local");
+    const original = inputs.originals[0], invalid = inputs.patches.find((patch) => resolveFusionCropContext(patch.id, original, nodes, connections).kind !== "local");
     const ready = inputs.originals.length === 1 && inputs.patches.length > 0 && !invalid;
-    const reason = inputs.originals.length > 1 ? "原图端口只能连接一张完整图片" : !original ? "完整原图连接左侧，局部修改图连接右上方补丁端口" : !inputs.patches.length ? "请将局部修改图连接到右上方补丁端口" : invalid ? `“${invalid.title}”缺少唯一选区上下文` : `${inputs.patches.length} 张局部修改图 · 本地合成，不调用 API`;
+    const reason = inputs.originals.length > 1 ? "原图端口只能连接一张完整图片" : !original ? "完整原图连接左侧，局部修改图连接右上方补丁端口" : !inputs.patches.length ? "请将局部修改图连接到右上方补丁端口" : invalid ? `“${invalid.title}”${resolveFusionCropContext(invalid.id, original, nodes, connections).kind === "conflict" ? "有多个回贴位置，请保留目标局部图的选区来源" : "没有选区来源，请使用提取选区的修改结果"}` : `${inputs.patches.length} 张局部修改图 · 本地合成，不调用 API`;
     const run = async () => {
         if (runningRef.current) return;
         const projectId = current.current.getProjectId?.();

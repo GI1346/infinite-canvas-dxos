@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { AtSign, Bot, Box, ChevronDown, Image as ImageIcon, Maximize2, MessageSquare, Minus, Plus, Send, Square, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { AtSign, Bot, Box, ChevronDown, Maximize2, MessageSquare, Minus, Plus, Send, Square, Trash2, X } from "lucide-react";
 import { Modal } from "antd";
 
 import { CanvasAssistantSkills } from "@/components/agent/canvas-assistant-skills";
@@ -10,6 +10,10 @@ import { useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { modelOptionLabel, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useCanvasAssistantStore } from "@/stores/use-canvas-assistant-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+
+import { CanvasPromptChipInput, type PromptChipInputHandle } from "@/components/canvas/canvas-prompt-chip-input";
+import { buildCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { assistantDraftWithReferences, assistantReferenceToken } from "@/lib/canvas/assistant-inline-references";
 
 const layoutKey = "blinkflow:canvas-assistant-layout";
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
@@ -27,14 +31,23 @@ const button = "inline-flex items-center justify-center gap-1 rounded-md px-2 py
 export function CanvasAssistantDock() {
     const store = useCanvasAssistantStore(), config = useConfigStore((state) => state.config), colorTheme = useThemeStore((state) => state.theme), theme = canvasThemes[colorTheme];
     useNodeRegistryVersion((state) => state.version);
-    const [layout, setLayout] = useState(initialLayout), [menu, setMenu] = useState<"mention" | "models" | null>(null), [query, setQuery] = useState(""), [renaming, setRenaming] = useState(false), [name, setName] = useState(""), [expanded, setExpanded] = useState(false);
-    const expandedTextarea = useRef<HTMLTextAreaElement>(null);
-    const textarea = useRef<HTMLTextAreaElement>(null), end = useRef<HTMLDivElement>(null), currentLayout = useRef(layout), moved = useRef(false), dragCleanup = useRef<(() => void) | null>(null);
+    const [layout, setLayout] = useState(initialLayout), [menu, setMenu] = useState<"models" | null>(null), [query, setQuery] = useState(""), [renaming, setRenaming] = useState(false), [name, setName] = useState(""), [expanded, setExpanded] = useState(false);
+    const expandedTextarea = useRef<PromptChipInputHandle>(null);
+    const textarea = useRef<PromptChipInputHandle>(null), end = useRef<HTMLDivElement>(null), currentLayout = useRef(layout), moved = useRef(false), dragCleanup = useRef<(() => void) | null>(null);
     const session = store.sessions.find((item) => item.id === store.currentId), snapshot = store.context?.snapshot;
     currentLayout.current = layout;
     const imageModels = selectableModelsByCapability(config, "image"), videoModels = selectableModelsByCapability(config, "video"), textModels = selectableModelsByCapability(config, "text");
     const modelLabel = (id: string) => modelOptionLabel(config, id);
     const nodeLabel = (id: string) => snapshot?.nodes.find((node) => node.id === id)?.title || id;
+    const references = useMemo(() => {
+        const resources = new Map(buildCanvasResourceReferences(snapshot?.nodes || []).map((item) => [item.nodeId, item]));
+        const nodes: CanvasResourceReference[] = (snapshot?.nodes || []).map((node) => ({ id: node.id, nodeId: node.id, kind: "text", title: node.title || node.id, active: true, ...resources.get(node.id), mentionLabel: resources.get(node.id)?.kind === "image" ? resources.get(node.id)?.label : undefined, label: assistantReferenceToken(node.id) }));
+        for (const id of session?.references || []) if (!nodes.some((node) => node.nodeId === id)) nodes.push({ id, nodeId: id, kind: "text", title: id, active: true, label: assistantReferenceToken(id) });
+        return [...nodes, ...[...imageModels, ...videoModels].map((id): CanvasResourceReference => ({ id: `model:${id}`, nodeId: id, kind: "text", active: true, label: `@[model:${id}]`, title: modelLabel(id), text: imageModels.includes(id) ? "图片模型" : "视频模型" }))];
+    }, [snapshot?.nodes, session?.references, config]);
+    const draft = assistantDraftWithReferences(session?.draft || "", session?.references || []);
+    const readOnly = !session || store.loading || session.running || Boolean(session.pending);
+    const selectReference = (reference: CanvasResourceReference) => { if (!reference.id.startsWith("model:")) return false; store.toggleModel(reference.nodeId); return true; };
     useEffect(() => {
         const resize = () => {
             const next = anchorAssistantDock(currentLayout.current, viewport());
@@ -76,9 +89,7 @@ export function CanvasAssistantDock() {
     if (!store.context) return null;
     const panelStyle: CSSProperties = { position: "fixed", zIndex: 240, left: layout.x, top: layout.y, width: "min(420px, calc(100vw - 16px))", height: layout.height, background: theme.node.panel, color: theme.node.text, border: `1px solid ${theme.toolbar.border}`, boxShadow: "0 14px 46px rgba(0,0,0,.18)", borderRadius: 16 };
     const inputStyle: CSSProperties = { background: "transparent", color: theme.node.text, border: `1px solid ${theme.node.stroke}`, borderRadius: 7, padding: "5px 7px" };
-    const removeTrigger = () => { if (session?.draft.endsWith("@")) store.setDraft(session.draft.slice(0, -1)); };
-    const chooseNode = (id: string) => { removeTrigger(); store.addReferences([id]); setMenu(null); setQuery(""); textarea.current?.focus(); };
-    const chooseModel = (id: string) => { removeTrigger(); store.toggleModel(id); setMenu(null); setQuery(""); textarea.current?.focus(); };
+    const chooseModel = (id: string) => { store.toggleModel(id); setMenu(null); setQuery(""); textarea.current?.focus(); };
     const filteredModels = (ids: string[]) => ids.filter((id) => modelLabel(id).toLowerCase().includes(query.toLowerCase()));
     const renderModels = (title: string, ids: string[]) => <section className="mb-3"><div className="mb-1 px-2 text-xs" style={{ color: theme.node.muted }}>{title}</div>{filteredModels(ids).map((id) => <button key={id} type="button" className={`${button} w-full !justify-start text-left`} style={session?.models.includes(id) ? { background: theme.toolbar.activeBg } : undefined} onClick={() => chooseModel(id)}><Box size={14} /><span className="min-w-0 flex-1 break-all">{modelLabel(id)}</span>{session?.models.includes(id) ? "✓" : ""}</button>)}{!filteredModels(ids).length && <p className="px-2 py-1 text-xs" style={{ color: theme.node.faint }}>暂无{title}模型</p>}</section>;
     return <div data-canvas-overlay data-canvas-no-zoom data-canvas-assistant onPointerDown={stop} onMouseDown={stop} onDoubleClick={stop} onContextMenu={stop} onKeyDown={stop} onKeyUp={stop} onWheel={stop}>
@@ -111,20 +122,20 @@ export function CanvasAssistantDock() {
                 <div className="mb-2"><CanvasAssistantSkills activeId={session?.skillId} onSelect={store.setSkill} disabled={!session || store.loading || session.running || Boolean(session.pending)} /></div>
                 <label className="mb-2 flex items-center gap-2 text-xs" style={{ color: theme.node.muted }}>对话模型<select data-assistant-chat-model aria-label="Agent 对话模型" disabled={session?.running} className="min-w-0 flex-1" style={inputStyle} value={session?.model || ""} onChange={(event) => store.setModel(event.target.value)}><option value="">请选择对话模型</option>{textModels.map((id) => <option key={id} value={id}>{modelLabel(id)}</option>)}</select></label>
                 <div className="relative rounded-xl border p-2" style={{ borderColor: theme.node.stroke }}>
-                    {(session?.references.length || session?.models.length) ? <div data-assistant-chips className="mb-2 flex max-h-28 flex-wrap gap-1 overflow-auto">{session?.references.map((id) => <span key={id} className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs" style={{ borderColor: theme.node.stroke }}><ImageIcon size={12} /><span className="max-w-48 truncate" title={nodeLabel(id)}>{nodeLabel(id)}</span><button type="button" title="移除节点引用" aria-label={`移除引用 ${nodeLabel(id)}`} onClick={() => store.removeReference(id)}><X size={12} /></button></span>)}{session?.models.map((id) => <span key={id} className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs" style={{ borderColor: theme.node.stroke }}><Box size={12} /><span className="max-w-64 truncate" title={modelLabel(id)}>{modelLabel(id)}</span><button type="button" title="移除模型引用" aria-label={`移除模型 ${modelLabel(id)}`} onClick={() => store.toggleModel(id)}><X size={12} /></button></span>)}</div> : null}
-                    <textarea ref={textarea} data-assistant-prompt aria-label="Agent 消息" placeholder="描述需求，@ 节点或图片 / 视频模型" rows={3} disabled={!session || session.running || Boolean(session.pending)} className="w-full resize-none bg-transparent text-xs leading-6 outline-none" value={session?.draft || ""} onChange={(event) => { store.setDraft(event.target.value); if (event.target.value.endsWith("@")) { setMenu("mention"); setQuery(""); } }} onKeyDown={(event) => { if (event.key === "Escape") setMenu(null); if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void store.send(); } }} />
+                    {session?.models.length ? <div data-assistant-chips className="mb-2 flex max-h-28 flex-wrap gap-1 overflow-auto">{session.models.map((id) => <span key={id} className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs" style={{ borderColor: theme.node.stroke }}><Box size={12} /><span className="max-w-64 truncate" title={modelLabel(id)}>{modelLabel(id)}</span><button type="button" title="移除模型引用" aria-label={`移除模型 ${modelLabel(id)}`} onClick={() => store.toggleModel(id)}><X size={12} /></button></span>)}</div> : null}
+                    <CanvasPromptChipInput key={session?.id} inputRef={textarea} ariaLabel="Agent 消息" placeholder="描述需求，@ 节点或图片 / 视频模型" className="min-h-20 max-h-44 w-full bg-transparent text-xs leading-6" value={draft} references={references} readOnly={readOnly} showReferenceTitle imageHoverPreview onReferenceSelect={selectReference} onChange={store.setDraft} onSubmit={() => void store.send()} />
                     <div className="flex items-center gap-1 border-t pt-1" style={{ borderColor: theme.node.stroke }}>
                         <button type="button" className={button} aria-label="添加选中节点到 Agent" title="添加选中节点" disabled={!snapshot?.selectedNodeIds.length} onClick={() => store.addReferences(snapshot?.selectedNodeIds || [])}><Plus size={15} /></button>
-                        <button type="button" data-assistant-mention className={button} aria-label="引用节点或模型" title="@ 节点 / 模型" onClick={() => { setMenu(menu === "mention" ? null : "mention"); setQuery(""); }}><AtSign size={16} /></button>
+                        <button type="button" data-assistant-mention className={button} aria-label="引用节点或模型" title="@ 节点 / 模型" disabled={readOnly} onClick={() => textarea.current?.openMention()}><AtSign size={16} /></button>
                         <button type="button" data-assistant-models className={button} aria-label="图片和视频生成模型" title="选择生成模型" onClick={() => { setMenu(menu === "models" ? null : "models"); setQuery(""); }}><Box size={16} /></button>
                         <button type="button" className={button} aria-label="全屏编辑 Agent 输入" title="全屏查看 / 编辑文字" disabled={!session} onClick={() => { setMenu(null); setExpanded(true); }}><Maximize2 size={15} /></button>
                         <CanvasAssistantGenerationMode />
                         <span className="min-w-0 flex-1 truncate text-[10px]" style={{ color: theme.node.muted }} title={session?.status}>{session?.status}</span>
                         {session?.running ? <button type="button" className={button} aria-label="停止 Agent" onClick={store.stop}><Square size={16} /></button> : <button type="button" className={button} aria-label="发送 Agent 消息" disabled={!session || Boolean(session.pending) || (!session.draft.trim() && !session.references.length)} onClick={() => void store.send()}><Send size={17} /></button>}
                     </div>
-                    {menu && <div data-canvas-overlay data-canvas-no-zoom data-assistant-menu role="dialog" aria-label={menu === "mention" ? "引用节点和模型" : "选择生成模型"} className="absolute bottom-full left-0 z-10 mb-2 w-full overflow-auto rounded-xl border p-2" style={{ maxHeight: Math.max(180, layout.height - 210), background: theme.node.panel, borderColor: theme.node.stroke, boxShadow: "0 8px 24px rgba(0,0,0,.15)" }}>
+                    {menu && <div data-canvas-overlay data-canvas-no-zoom data-assistant-menu role="dialog" aria-label="选择生成模型" className="absolute bottom-full left-0 z-10 mb-2 w-full overflow-auto rounded-xl border p-2" style={{ maxHeight: Math.max(180, layout.height - 210), background: theme.node.panel, borderColor: theme.node.stroke, boxShadow: "0 8px 24px rgba(0,0,0,.15)" }}>
                         <div className="mb-2 flex gap-1"><input aria-label="搜索节点或模型" placeholder="搜索" className="min-w-0 flex-1 text-xs" style={inputStyle} value={query} onChange={(event) => setQuery(event.target.value)} /><button type="button" className={button} aria-label="关闭模型菜单" onClick={() => setMenu(null)}><X size={14} /></button></div>
-                        {menu === "mention" && <section className="mb-3"><div className="mb-1 px-2 text-xs" style={{ color: theme.node.muted }}>画布节点</div>{snapshot?.nodes.filter((node) => `${node.title} ${node.type}`.toLowerCase().includes(query.toLowerCase())).map((node) => <button key={node.id} type="button" className={`${button} w-full !justify-start text-left`} onClick={() => chooseNode(node.id)}><span className="min-w-0 flex-1 truncate">{node.title}</span><span style={{ color: theme.node.faint }}>{node.type}</span></button>)}{!snapshot?.nodes.length && <p className="px-2 text-xs" style={{ color: theme.node.faint }}>画布暂无节点</p>}</section>}
+
                         {renderModels("图片", imageModels)}{renderModels("视频", videoModels)}
                     </div>}
                 </div>
@@ -145,7 +156,7 @@ export function CanvasAssistantDock() {
         >
             <p className="mb-3 text-xs" style={{ color: theme.node.muted }}>{session?.running || session?.pending ? "任务进行中，仅查看当前输入。" : "修改实时保留，Enter 换行；关闭后回到输入框，不会发送。"}</p>
             {/* Share the session draft directly: closing or Escape cannot discard edits or send a request. */}
-            <textarea ref={expandedTextarea} data-assistant-expanded-prompt aria-label="Agent 全屏输入文字" className="thin-scrollbar min-h-0 w-full flex-1 resize-none rounded-xl border p-4 text-base leading-7 outline-none" style={{ background: "transparent", borderColor: theme.node.stroke, color: theme.node.text }} value={session?.draft || ""} readOnly={!session || session.running || Boolean(session.pending)} onChange={(event) => store.setDraft(event.target.value)} placeholder="在这里查看和编辑完整输入文字" />
+            <CanvasPromptChipInput inputRef={expandedTextarea} onEscape={() => setExpanded(false)} ariaLabel="Agent 全屏输入文字" containerClassName="min-h-0 flex-1 flex flex-col" className="thin-scrollbar min-h-0 w-full flex-1 rounded-xl border p-4 text-base leading-7" style={{ background: "transparent", borderColor: theme.node.stroke, color: theme.node.text }} value={draft} references={references} readOnly={readOnly} showReferenceTitle imageHoverPreview onReferenceSelect={selectReference} onChange={store.setDraft} placeholder="在这里查看和编辑完整输入文字，@ 引用节点或模型" />
         </Modal>
     </div>;
 }

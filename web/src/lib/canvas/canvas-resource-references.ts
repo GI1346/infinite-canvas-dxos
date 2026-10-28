@@ -13,6 +13,7 @@ export type CanvasResourceReference = {
     kind: CanvasResourceKind;
     label: string;
     title: string;
+    mentionLabel?: string;
     previewUrl?: string;
     text?: string;
     active: boolean;

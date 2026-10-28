@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, Ref } from "react";
 import { createPortal } from "react-dom";
 import { Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
@@ -9,16 +9,26 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { CanvasImagePreviewDialog } from "@/components/canvas/canvas-image-preview-dialog";
 
 type Props = {
     value: string;
     references: CanvasResourceReference[];
     onChange: (value: string) => void;
     onSubmit?: () => void;
+    onEscape?: () => void;
     className?: string;
     style?: CSSProperties;
     placeholder?: string;
+    inputRef?: Ref<PromptChipInputHandle>;
+    readOnly?: boolean;
+    ariaLabel?: string;
+    showReferenceTitle?: boolean;
+    containerClassName?: string;
+    onReferenceSelect?: (reference: CanvasResourceReference) => boolean;
+    imageHoverPreview?: boolean;
 };
+export type PromptChipInputHandle = { focus: () => void; openMention: () => void; insertReference: (label: string) => void };
 
 type MentionState = {
     query: string;
@@ -31,28 +41,45 @@ type Token =
 
 // Prompt-panel contentEditable input: @ references embed thumbnail chips instead of plain label text.
 // Serialization converts chips back to reference labels so the generated value matches the former textarea semantics.
-export function CanvasPromptChipInput({ value, references, onChange, onSubmit, className, style, placeholder }: Props) {
+export function CanvasPromptChipInput({ value, references, onChange, onSubmit, onEscape, className, style, placeholder, inputRef, readOnly, ariaLabel, showReferenceTitle, containerClassName, onReferenceSelect, imageHoverPreview }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const savedRange = useRef<Range | null>(null);
     // Track the last value emitted to the parent. An identical focused value is this component's own echo,
     // so skip rebuilding to preserve the caret and IME. Rebuild external changes even while focused.
     const lastEmittedRef = useRef(value);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [hoverImage, setHoverImage] = useState<{ reference: CanvasResourceReference; rect: DOMRect } | null>(null);
+    const hoverClose = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const keepHover = () => { if (hoverClose.current) clearTimeout(hoverClose.current); };
+    const hideHover = () => { keepHover(); hoverClose.current = setTimeout(() => setHoverImage(null), 150); };
+    const showHover = (reference: CanvasResourceReference, element: HTMLElement) => {
+        if (!imageHoverPreview || reference.kind !== "image" || !reference.previewUrl) return;
+        keepHover(); setHoverImage({ reference, rect: element.getBoundingClientRect() });
+    };
+    useEffect(() => () => { if (hoverClose.current) clearTimeout(hoverClose.current); }, []);
+    useEffect(() => { setHoverImage(null); setImagePreview(null); }, [ariaLabel]);
 
     const activeReferences = useMemo(() => references.filter((item) => item.active), [references]);
     const referenceByLabel = useMemo(() => new Map(activeReferences.map((item) => [item.label, item])), [activeReferences]);
     // Match longer labels first so a shorter label cannot split a longer one.
     const activeLabels = useMemo(() => Array.from(new Set(activeReferences.map((item) => item.label))).sort((a, b) => b.length - a.length), [activeReferences]);
     const tokens = useMemo(() => parseTokens(value, activeLabels), [value, activeLabels]);
+    useEffect(() => {
+        const remember = () => { const selection = window.getSelection(); if (selection?.rangeCount && editorRef.current?.contains(selection.anchorNode)) savedRange.current = selection.getRangeAt(0).cloneRange(); };
+        document.addEventListener("selectionchange", remember);
+        return () => document.removeEventListener("selectionchange", remember);
+    }, []);
+    useEffect(() => { if (readOnly) setMention(null); }, [readOnly]);
 
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = mention.query.trim().toLowerCase();
         if (!query) return activeReferences;
-        return activeReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
+        return activeReferences.filter((item) => `${item.label} ${item.mentionLabel || ""} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
     }, [mention, activeReferences]);
 
     // Rebuild the DOM from value when unfocused, or when a focused value is an external change rather than an emitted echo.
@@ -67,11 +94,12 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 return;
             }
             const reference = referenceByLabel.get(token.label);
-            if (reference) editor.append(createReferenceChip(reference, theme, setImagePreview));
+            if (reference) editor.append(createReferenceChip(reference, theme, setImagePreview, showReferenceTitle));
             else editor.append(document.createTextNode(token.label));
         });
         lastEmittedRef.current = value;
-    }, [tokens, referenceByLabel, theme, value]);
+        savedRange.current = null;
+    }, [tokens, referenceByLabel, theme, value, showReferenceTitle]);
 
     const emit = (next: string) => {
         lastEmittedRef.current = next;
@@ -81,11 +109,14 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
+        const selection = window.getSelection();
+        if (selection?.rangeCount && editor.contains(selection.anchorNode)) savedRange.current = selection.getRangeAt(0).cloneRange();
         emit(serializeEditor(editor));
         syncMention();
     };
 
     const syncMention = () => {
+        if (readOnly) return;
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
         if (!match || !activeReferences.length) {
@@ -103,13 +134,17 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
 
     const insertReference = (reference: CanvasResourceReference) => {
         const editor = editorRef.current;
-        if (!editor) return;
+        if (!editor || readOnly) return;
+        restoreCaret();
         removeActiveMention();
-        const chip = createReferenceChip(reference, theme, setImagePreview);
+        setHoverImage(null);
+        if (onReferenceSelect?.(reference)) { closeMention(); emit(serializeEditor(editor)); return; }
+        const chip = createReferenceChip(reference, theme, setImagePreview, showReferenceTitle);
         const space = document.createTextNode(" ");
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
         if (range) {
+            range.deleteContents();
             range.insertNode(space);
             range.insertNode(chip);
             range.setStartAfter(space);
@@ -122,12 +157,36 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         }
         closeMention();
         emit(serializeEditor(editor));
+        savedRange.current = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
     };
+
+    const restoreCaret = () => {
+        const editor = editorRef.current, selection = window.getSelection();
+        if (!editor) return;
+        if (selection?.rangeCount && editor.contains(selection.anchorNode)) savedRange.current = selection.getRangeAt(0).cloneRange();
+        editor.focus();
+        if (savedRange.current && editor.contains(savedRange.current.startContainer)) { selection?.removeAllRanges(); selection?.addRange(savedRange.current.cloneRange()); }
+        else if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) placeCaretAtEnd(editor);
+    };
+    useImperativeHandle(inputRef, () => ({
+        focus: restoreCaret,
+        insertReference: (label) => { const reference = referenceByLabel.get(label); if (reference) insertReference(reference); },
+        openMention: () => {
+            if (readOnly) return;
+            restoreCaret();
+            if (!/@([^\s@]*)$/.test(textBeforeCaret())) {
+                const selection = window.getSelection(), range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+                if (!range) return;
+                range.deleteContents(); const trigger = document.createTextNode("@"); range.insertNode(trigger); range.setStart(trigger, 1); range.collapse(true); selection?.removeAllRanges(); selection?.addRange(range);
+            }
+            syncFromEditor();
+        },
+    }));
 
     const showPlaceholder = !value.trim();
 
     return (
-        <div className="relative w-full">
+        <div className={`relative w-full ${containerClassName || ""}`}>
             {showPlaceholder && placeholder ? (
                 <div className="pointer-events-none absolute left-3 top-2 text-sm leading-5" style={{ color: theme.node.placeholder }}>
                     {placeholder}
@@ -135,14 +194,38 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
             ) : null}
             <div
                 ref={editorRef}
-                contentEditable
+                contentEditable={!readOnly}
                 suppressContentEditableWarning
                 role="textbox"
+                aria-label={ariaLabel}
+                aria-readonly={readOnly}
                 aria-multiline="true"
                 className={`${className || ""} overflow-y-auto whitespace-pre-wrap break-words outline-none`}
                 style={{ ...style, cursor: "text" }}
                 onInput={() => {
                     if (!composingRef.current) syncFromEditor();
+                }}
+                onMouseOver={(event) => {
+                    const chip = (event.target as Element).closest<HTMLElement>("[data-ref-label]");
+                    const reference = chip?.dataset.refLabel ? referenceByLabel.get(chip.dataset.refLabel) : undefined;
+                    if (chip && reference) showHover(reference, chip);
+                }}
+                onMouseOut={hideHover}
+                onPaste={(event) => {
+                    if (readOnly) return;
+                    event.preventDefault();
+                    restoreCaret();
+                    const selection = window.getSelection(), range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+                    if (!range) return;
+                    const fragment = document.createDocumentFragment();
+                    for (const token of parseTokens(event.clipboardData.getData("text/plain"), activeLabels)) {
+                        const reference = token.type === "reference" ? referenceByLabel.get(token.label) : undefined;
+                        fragment.append(reference ? createReferenceChip(reference, theme, setImagePreview, showReferenceTitle) : document.createTextNode(token.type === "text" ? token.value : token.label));
+                    }
+                    const last = fragment.lastChild;
+                    if (!last) return;
+                    range.deleteContents(); range.insertNode(fragment); range.setStartAfter(last); range.collapse(true); selection?.removeAllRanges(); selection?.addRange(range);
+                    syncFromEditor();
                 }}
                 onCompositionStart={() => {
                     composingRef.current = true;
@@ -154,6 +237,12 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     event.stopPropagation();
                     if (isImeComposing(event)) return;
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        if (mention) closeMention(); else onEscape?.();
+                        return;
+                    }
+                    if (readOnly) return;
                     if (mention && candidates.length) {
                         if (event.key === "ArrowDown") {
                             event.preventDefault();
@@ -168,11 +257,6 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                         if (event.key === "Enter") {
                             event.preventDefault();
                             insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
-                            return;
-                        }
-                        if (event.key === "Escape") {
-                            event.preventDefault();
-                            closeMention();
                             return;
                         }
                     }
@@ -191,14 +275,18 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 onBlur={() => window.setTimeout(closeMention, 120)}
             />
             {mention && candidates.length ? (
-                <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} />
+                <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} showTitle={showReferenceTitle} onImageHover={showHover} onImageLeave={hideHover} />
             ) : null}
-            {imagePreview ? <Image src={imagePreview} alt={i18n.t("canvas.composer.imagePreview")} style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
+            {hoverImage && createPortal(<div data-canvas-overlay data-canvas-no-zoom data-canvas-shortcuts-ignore data-reference-image-preview className="fixed z-[1500] flex flex-col gap-2 rounded-xl border p-3 shadow-2xl" style={{ width: Math.min(360, window.innerWidth - 24), left: clamp(hoverImage.rect.right + 10 + 360 <= window.innerWidth ? hoverImage.rect.right + 10 : hoverImage.rect.left - 370, 12, Math.max(12, window.innerWidth - 372)), top: clamp(hoverImage.rect.top, 12, Math.max(12, window.innerHeight - 380)), background: theme.node.panel, color: theme.node.text, borderColor: theme.node.stroke }} onMouseEnter={keepHover} onMouseLeave={hideHover} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.preventDefault()} onWheel={(event) => event.stopPropagation()}>
+                <img src={hoverImage.reference.previewUrl} alt={hoverImage.reference.title} draggable={false} className="h-72 w-full object-contain" />
+                <div className="flex min-w-0 items-center gap-2 text-xs"><span className="min-w-0 flex-1 truncate">{hoverImage.reference.title}</span><button type="button" className="shrink-0 rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10" onClick={(event) => { event.stopPropagation(); setImagePreview(hoverImage.reference.previewUrl || null); setHoverImage(null); }}>查看原图</button></div>
+            </div>, document.body)}
+            {imagePreview ? imageHoverPreview ? <CanvasImagePreviewDialog dataUrl={imagePreview} title="引用图片" open onClose={() => setImagePreview(null)} /> : <Image src={imagePreview} alt={i18n.t("canvas.composer.imagePreview")} style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
 }
 
-function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect: DOMRect | null; references: CanvasResourceReference[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: CanvasResourceReference) => void }) {
+function MentionMenu({ rect, references, activeIndex, theme, onSelect, showTitle, onImageHover, onImageLeave }: { rect: DOMRect | null; references: CanvasResourceReference[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: CanvasResourceReference) => void; showTitle?: boolean; onImageHover: (reference: CanvasResourceReference, element: HTMLElement) => void; onImageLeave: () => void }) {
     const selectedRef = useRef(false);
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
 
@@ -240,6 +328,8 @@ function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect:
                     type="button"
                     className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition"
                     style={{ background: index === activeIndex ? theme.toolbar.activeBg : "transparent", color: index === activeIndex ? theme.toolbar.activeText : theme.node.text }}
+                    onMouseEnter={(event) => onImageHover(reference, event.currentTarget)}
+                    onMouseLeave={onImageLeave}
                     onPointerDown={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -253,8 +343,8 @@ function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect:
                 >
                     <ReferencePreview reference={reference} />
                     <span className="min-w-0 flex-1">
-                        <span className="block font-medium">{reference.label}</span>
-                        <span className="block truncate opacity-65">{reference.text || reference.title}</span>
+                        <span className="block truncate font-medium">{showTitle ? reference.mentionLabel || reference.title : reference.label}</span>
+                        {(!showTitle || reference.mentionLabel || reference.text) && <span className="block truncate opacity-65">{reference.text || reference.title}</span>}
                     </span>
                 </button>
             ))}
@@ -274,17 +364,25 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     );
 }
 
-function createReferenceChip(reference: CanvasResourceReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
+function createReferenceChip(reference: CanvasResourceReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void, showTitle = false) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
     wrapper.dataset.refLabel = reference.label;
+    wrapper.title = reference.title;
     if (reference.kind === "image" && reference.previewUrl) {
         const image = document.createElement("img");
         image.src = reference.previewUrl;
         image.alt = reference.title;
-        image.className = "size-6 rounded object-cover";
-        wrapper.className = "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
+        image.draggable = false;
+        image.className = showTitle ? "size-[1em] shrink-0 rounded-[2px] object-cover" : "size-6 rounded object-cover";
+        wrapper.className = showTitle ? "mx-px inline-flex h-[1em] items-center gap-[0.15em] whitespace-nowrap align-middle leading-none" : "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
+        wrapper.style.borderColor = theme.node.stroke;
         wrapper.appendChild(image);
+        if (showTitle) {
+            const label = document.createElement("span");
+            label.textContent = `@${reference.mentionLabel || reference.title}`;
+            wrapper.appendChild(label);
+        }
         wrapper.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -296,7 +394,7 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
         wrapper.title = reference.text || reference.title;
         const text = document.createElement("span");
         text.className = "block truncate";
-        text.textContent = reference.kind === "text" ? reference.text || reference.title : reference.label;
+        text.textContent = showTitle ? reference.title : reference.kind === "text" ? reference.text || reference.title : reference.label;
         wrapper.appendChild(text);
     }
     return wrapper;
@@ -314,7 +412,10 @@ function serializeNodes(nodes: NodeListOf<ChildNode>) {
         const label = node.dataset.refLabel;
         if (label) result += label;
         else if (node.tagName === "BR") result += "\n";
-        else result += serializeNodes(node.childNodes);
+        else {
+            if ((node.tagName === "DIV" || node.tagName === "P") && node.previousSibling && !result.endsWith("\n")) result += "\n";
+            result += serializeNodes(node.childNodes);
+        }
     });
     return result;
 }
@@ -326,7 +427,17 @@ function removeActiveMention() {
     const text = textBeforeCaret();
     const match = /@([^\s@]*)$/.exec(text);
     if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
+    const editor = closestEditor(range.startContainer);
+    if (!editor) return;
+    const walker = document.createTreeWalker(editor, window.NodeFilter.SHOW_TEXT), before: Text[] = [];
+    let current: Node | null;
+    while ((current = walker.nextNode())) if (!current.parentElement?.closest("[data-ref-label]") && range.comparePoint(current, 0) <= 0) before.push(current as Text);
+    let remaining = match[0].length;
+    for (const node of before.reverse()) {
+        const end = node === range.startContainer ? range.startOffset : node.length;
+        if (remaining <= end) { range.setStart(node, end - remaining); break; }
+        remaining -= end;
+    }
     range.deleteContents();
 }
 
@@ -372,7 +483,9 @@ function textBeforeCaret() {
     const editor = closestEditor(range.startContainer);
     if (!editor) return "";
     range.setStart(editor, 0);
-    return range.toString();
+    const content = range.cloneContents();
+    content.querySelectorAll("[data-ref-label]").forEach((chip) => chip.replaceWith(document.createTextNode(" ")));
+    return content.textContent || "";
 }
 
 function caretRect(): DOMRect | null {

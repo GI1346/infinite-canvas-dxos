@@ -1653,6 +1653,25 @@ function InfiniteCanvasPage() {
         setDialogNodeId(id);
     }, []);
 
+    const createDroppedImageGrid = useCallback(async (files: File[], position: Position) => {
+        const project = generationProjectRef.current;
+        const imported: CanvasNodeData[] = [];
+        for (const file of files) {
+            if (!project.alive || generationProjectRef.current !== project) return;
+            try {
+                const image = await uploadImage(file), size = fitNodeSize(image.width, image.height);
+                imported.push({ id: nanoid(), type: CanvasNodeType.Image, title: file.name, position: { ...position }, ...size, metadata: imageMetadata(image) });
+            } catch (error) { message.error(`${file.name}：${error instanceof Error ? error.message : "图片导入失败"}`); }
+        }
+        if (!imported.length || !project.alive || generationProjectRef.current !== project) return;
+        const selected = new Set(imported.map((node) => node.id));
+        const arranged = arrangeGrid(imported, selected, gridColumns, gridGap);
+        // Anchor the first image at the drop point, just like a single-image import.
+        const offset = { x: imported[0].width / 2, y: imported[0].height / 2 };
+        setNodes((previous) => [...previous, ...arranged.map((node) => ({ ...node, position: { x: node.position.x - offset.x, y: node.position.y - offset.y } }))]);
+        setSelectedNodeIds(selected); setSelectedConnectionId(null); setDialogNodeId(null);
+    }, [gridColumns, gridGap, message]);
+
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video");
         const size = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
@@ -2490,6 +2509,16 @@ function InfiniteCanvasPage() {
             if (!files.length) return;
 
             const basePos = screenToCanvas(event.clientX, event.clientY);
+            const images = files.filter((file) => file.type.startsWith("image/"));
+            if (images.length > 1) {
+                void createDroppedImageGrid(images, basePos);
+                // Other media retain their own import behavior, outside the image grid.
+                files.filter((file) => !file.type.startsWith("image/")).forEach((file, index) => {
+                    const position = { x: basePos.x - 720, y: basePos.y + index * 400 };
+                    if (isAudioFile(file)) void createAudioFileNode(file, position); else void createVideoFileNode(file, position);
+                });
+                return;
+            }
             const STAGGER = 40;
             for (let i = 0; i < files.length; i++) {
                 const pos = { x: basePos.x + i * STAGGER, y: basePos.y + i * STAGGER };
@@ -2503,7 +2532,7 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, createDroppedImageGrid, screenToCanvas],
     );
 
     const startTitleEditing = useCallback(() => {
@@ -2659,7 +2688,7 @@ function InfiniteCanvasPage() {
                             : [];
                     const referenceImages = [...new Map([...sourceReference, ...generationContext.referenceImages].map((image) => [image.id, image])).values()];
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), cropContext: imageOutputCropContext(referenceImages, nodesRef.current, connectionsRef.current) || sourceNode?.metadata?.cropContext };
+                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), cropContext: imageOutputCropContext(referenceImages, nodesRef.current, connectionsRef.current, originalSourceNode) };
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };

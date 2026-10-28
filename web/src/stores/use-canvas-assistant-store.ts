@@ -9,6 +9,7 @@ import { assistantGraphSummary, assistantRunMode, assistantRunTargets, assistant
 import type { AiTextMessage } from "@/services/api/image";
 import { selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import type { CanvasGenerationMode, CanvasNodeData } from "@/types/canvas";
+import { assistantDraftWithReferences, assistantReadableDraft, assistantReferenceIds, assistantReferenceToken } from "@/lib/canvas/assistant-inline-references";
 
 export type CanvasAssistantContext = {
     snapshot: CanvasAgentSnapshot;
@@ -179,11 +180,11 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
         const projectId = context.snapshot.projectId;
         if (state.loading) { pendingReferences.set(projectId, [...new Set([...(pendingReferences.get(projectId) || []), ...ids])]); set({ open: true }); return; }
         const value = active(); if (!value) return;
-        patch(projectId, value.session.id, (session) => ({ ...session, references: [...new Set([...session.references, ...expandReferences(context, ids)])] })); set({ open: true });
+        patch(projectId, value.session.id, (session) => { const references = [...new Set([...session.references, ...expandReferences(context, ids)])]; return { ...session, references, draft: assistantDraftWithReferences(session.draft, references) }; }); set({ open: true });
     },
-    removeReference: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, references: session.references.filter((item) => item !== id) })); },
+    removeReference: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, draft: session.draft.split(assistantReferenceToken(id)).join(""), references: session.references.filter((item) => item !== id) })); },
     toggleModel: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, models: session.models.includes(id) ? session.models.filter((item) => item !== id) : [...session.models, id] })); },
-    setDraft: (draft) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, draft })); },
+    setDraft: (draft) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, draft, references: assistantReferenceIds(draft) })); },
     setModel: (model) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, model })); },
     setSkill: (skillId) => { const value = active(); if (value && !get().loading && !value.session.running && !value.session.pending) patch(value.projectId, value.session.id, (session) => ({ ...session, skillId })); },
     createSession: () => { const context = get().context; if (!context) return; const projectId = context.snapshot.projectId, project = projectOf(projectId), session = newSession(projectId); project.sessions = [session, ...project.sessions]; project.currentId = session.id; publish(projectId); persist(projectId); },
@@ -203,7 +204,8 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
             const skill = getAssistantSkill(session.skillId);
             if (session.skillId && !skill) throw new Error("当前会话的 Skill 已不存在，请重新选择或取消该 Skill");
             const turnSkillPrompt = buildAssistantSkillPrompt(skill);
-            const text = session.draft.trim() || "请分析这些节点", references = [...session.references], models = [...session.models];
+            const nodes = context.getSnapshot().nodes;
+            const text = assistantReadableDraft(assistantDraftWithReferences(session.draft, session.references), (id) => nodes.find((node) => node.id === id)?.title || id).trim() || "请分析这些节点", references = [...session.references], models = [...session.models];
             const user: AiTextMessage = { role: "user", content: `${text}\n本次引用节点ID：${JSON.stringify(references)}\n本次指定生成模型ID：${JSON.stringify(models)}\n当前画布：${JSON.stringify(assistantGraphSummary(context.getSnapshot()))}` };
             let transcript = [...session.transcript, user];
             patch(projectId, session.id, (item) => ({ ...item, running: true, draft: "", references: [], models: [], turnModels: models, turnSkillPrompt, title: item.messages.length ? item.title : text.split("\n")[0], transcript, pending: undefined, messages: [...item.messages, { id: nanoid(), role: "user", text, references, models }] }));

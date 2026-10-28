@@ -62,7 +62,7 @@ class Raster {
 }
 const originalCreateElement = document.createElement.bind(document);
 (document as any).createElement = (tag: string, ...rest: any[]) => tag === "canvas" ? new Raster() : originalCreateElement(tag, ...rest);
-const { extractImageSelection, selectionRect, paddedSelection, resolveCropContext, imageOutputCropContext, fuseImageNodes, fusionInputs } = await import("../src/lib/canvas/canvas-local-fusion");
+const { extractImageSelection, selectionRect, paddedSelection, resolveCropContext, imageOutputCropContext, resolveFusionCropContext, fuseImageNodes, fusionInputs } = await import("../src/lib/canvas/canvas-local-fusion");
 const { runLocalFusionNode, isLocalFusionRunning } = await import("../src/lib/canvas/canvas-local-fusion-run");
 const { LocalFusionContent } = await import("../src/components/canvas/nodes/local-fusion-node");
 const { buildNodeContext } = await import("../src/lib/canvas/plugin-node-context");
@@ -117,6 +117,17 @@ async function main() {
         const batch = node("batch", context); batch.metadata!.images = [{ id: "item", status: "success", content: "blob:item", storageKey: "image:item", naturalWidth: 12, naturalHeight: 12, bytes: 1, mimeType: "image/png" }];
         assert.deepEqual(imageOutputCropContext([{ nodeId: "batch:item" }], [batch], []), context);
     });
+    await check("editing local target preserves destination despite additional local references; full-image boundary stays full", () => {
+        const foreign = node("foreign", { ...context, sourceNodeId: "different-original", sourceIdentity: "different-hash", sourceStorageKey: "image:different" });
+        assert.deepEqual(imageOutputCropContext([{ id: "local" }, { id: "foreign" }], [...graph, foreign], [], local), context);
+        assert.deepEqual(imageOutputCropContext([{ id: "local" }], graph, [], cropped), { full: true });
+        const result = node("ambiguous", { conflict: true }); result.metadata!.references = ["image:local", "image:foreign"];
+        const saved = JSON.parse(JSON.stringify([...graph, foreign, result]));
+        assert.deepEqual(resolveFusionCropContext(result.id, original, saved, []), { kind: "local", context });
+        result.metadata!.references!.push("image:other");
+        assert.equal(resolveFusionCropContext(result.id, original, [...graph, foreign, result], []).kind, "conflict", "two regions of same original must never be guessed");
+        assert.equal(resolveFusionCropContext("crop", original, graph, [edge("local", "crop")]).kind, "none");
+    });
     const fusion = node("fusion", undefined, LOCAL_FUSION_NODE_TYPE);
     await check("fusion original/patch inputs, reverse-start direction and fixed/preview curve anchors agree", () => {
         const h = { nodeId: "original", handleType: "source" as const };
@@ -135,6 +146,17 @@ async function main() {
     await check("fusion retains full dimensions, exact outside pixels and replaced inner pixels without mutating original", async () => {
         const result = await fuseImageNodes(original, [local], [original, local], [], false), output = await decode(blobs.get(result.storageKey!)!);
         assert.equal(output.width, 40); assert.equal(output.height, 30); assert.deepEqual(pixel(output, 0, 0), [25, 50, 75, 255]); assert.deepEqual(pixel(output, 10, 10), [200, 20, 30, 255]);
+        for (let y = 0; y < 30; y++) for (let x = 0; x < 40; x++) if (x < 9 || x >= 21 || y < 9 || y >= 21) assert.deepEqual(pixel(output, x, y), [25, 50, 75, 255]);
+        assert.deepEqual(pixel(await decode(blobs.get("image:original")!), 10, 10), [25, 50, 75, 255]);
+    });
+    await check("saved ambiguous edit with another product reference recovers its region and fuses without changing original", async () => {
+        const foreign = node("foreign-reference", { ...context, sourceNodeId: "other-original", sourceStorageKey: "image:other-original", sourceIdentity: "other-identity" });
+        const edited = node("saved-edit", { conflict: true });
+        edited.metadata!.references = ["image:local", "image:foreign-reference"];
+        blobs.set("image:saved-edit", blobOf(fixture(12, 12, [100, 120, 140, 255])));
+        const nodes = JSON.parse(JSON.stringify([original, local, foreign, edited]));
+        const result = await fuseImageNodes(original, [edited], nodes, [], false), output = await decode(blobs.get(result.storageKey!)!);
+        assert.deepEqual(pixel(output, 10, 10), [100, 120, 140, 255]);
         for (let y = 0; y < 30; y++) for (let x = 0; x < 40; x++) if (x < 9 || x >= 21 || y < 9 || y >= 21) assert.deepEqual(pixel(output, x, y), [25, 50, 75, 255]);
         assert.deepEqual(pixel(await decode(blobs.get("image:original")!), 10, 10), [25, 50, 75, 255]);
     });

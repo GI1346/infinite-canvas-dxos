@@ -32,7 +32,11 @@ export function resolveCropContext(nodeId: string, nodes: CanvasNodeData[], conn
 
 type ImageContextReference = { id?: string; nodeId?: string; storageKey?: string; url?: string; dataUrl?: string };
 // Freeze only actual image inputs. A table/config traversal would mix unrelated rows or unused references.
-export function imageOutputCropContext(references: ImageContextReference[], nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasCropContext {
+export function imageOutputCropContext(references: ImageContextReference[], nodes: CanvasNodeData[], connections: CanvasConnection[], editingNode?: CanvasNodeData): CanvasCropContext {
+    const primary = editingNode?.metadata?.cropContext;
+    // Editing a local image keeps its own destination; additional references only describe the edit.
+    if (primary && "full" in primary) return { full: true };
+    if (primary && !("full" in primary) && !("conflict" in primary)) return structuredClone(primary);
     const contexts = new Map<string, LocalCropContext>();
     for (const reference of references) {
         const id = reference.nodeId || reference.id;
@@ -45,6 +49,31 @@ export function imageOutputCropContext(references: ImageContextReference[], node
         }
     }
     return contexts.size > 1 ? { conflict: true } : contexts.size ? structuredClone(contexts.values().next().value!) : { full: true };
+}
+
+// Recover an already-generated ambiguous patch only when the connected original identifies one region.
+// Never cross a full-image boundary, a table or a config node to guess a destination.
+export function resolveFusionCropContext(nodeId: string, original: CanvasNodeData | undefined, nodes: CanvasNodeData[], connections: CanvasConnection[]): CropContextResolution {
+    const resolved = resolveCropContext(nodeId, nodes, connections);
+    if (resolved.kind !== "conflict" || !original) return resolved;
+    const index = new Map(nodes.map((node) => [node.id, node])), pending = [nodeId], seen = new Set<string>(), candidates = new Map<string, LocalCropContext>();
+    for (let cursor = 0; cursor < pending.length; cursor++) {
+        const node = index.get(pending[cursor]);
+        if (!node || node.type !== "image" || seen.has(node.id)) continue;
+        seen.add(node.id);
+        const context = node.metadata?.cropContext;
+        if (context && "full" in context) continue;
+        if (context && !("conflict" in context)) {
+            if (context.sourceNodeId === original.id || (context.sourceStorageKey && context.sourceStorageKey === original.metadata?.storageKey)) candidates.set(JSON.stringify([context.sourceIdentity, context.rect, context.paddedRect]), context);
+            continue;
+        }
+        const references = node.metadata?.references || [];
+        for (const reference of references) {
+            nodes.filter((item) => item.metadata?.storageKey === reference || item.metadata?.content === reference).forEach((item) => pending.push(item.id));
+        }
+        connections.filter((edge) => edge.toNodeId === node.id).forEach((edge) => pending.push(edge.fromNodeId));
+    }
+    return candidates.size === 1 ? { kind: "local", context: candidates.values().next().value! } : resolved;
 }
 
 export function fusionInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -148,7 +177,7 @@ export async function fuseImageNodes(original: CanvasNodeData, patches: CanvasNo
         const identity = await imageIdentity(originalBlob);
         const contexts: LocalCropContext[] = [];
         for (const patch of patches) {
-            const resolved = resolveCropContext(patch.id, nodes, connections);
+            const resolved = resolveFusionCropContext(patch.id, original, nodes, connections);
             if (resolved.kind === "none") throw new Error(`“${patch.title}”没有选区上下文，请连接“提取选区”得到的局部图或其改图结果`);
             if (resolved.kind === "conflict") throw new Error(`“${patch.title}”混入多个不同选区，无法确定回贴位置；只保留需要回贴的局部图，其他参考请使用普通裁剪图`);
             validateContext(resolved.context, originalBitmap, identity);

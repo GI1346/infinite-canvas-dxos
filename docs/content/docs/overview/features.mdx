@@ -41,6 +41,12 @@ description: Major features available in the current project
 
 See [Codex App Plugin](/docs/overview/codex-app-plugin) for installation and usage.
 
+## 已确认的 BlinkFlow 0.20.14 交互
+
+- Agent 图片引用以与文字等高的小缩略图和 @图片编号插入光标处；普通输入、全屏编辑共用草稿，可悬浮看大图或查看原图，引用按节点 ID 保存。
+- 提取选区的结果加入其他参考图后保留目标回贴位置；来源明确且唯一的旧冲突可恢复选区，融合继续校验原图并保留选区外像素。
+- 多张外部图片拖入按当前宫格列数和间距排列，保留导入顺序、比例和独立节点。
+
 ## Plugin system
 
 Canvas plugins can contribute node types, rendering, inspectors, serialization, migration, toolbar actions, and optional AI generation capabilities. Built-in and local plugins are managed through the canvas UI.
