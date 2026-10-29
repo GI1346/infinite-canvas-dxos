@@ -55,6 +55,11 @@ See [Codex App Plugin](/docs/overview/codex-app-plugin) for installation and usa
 - 画布添加图片引用恢复当前会话最后编辑光标；Agent 主浮窗、大编辑窗和输入区支持调整大小，大编辑窗不遮挡画布选图。
 - 新发送消息保留换行、空行和行内图片引用顺序，支持逐条复制文字；普通和大编辑窗共享草稿与光标。
 
+## 已确认的 BlinkFlow 0.20.17 交互
+
+- 图片节点中手动选定的质量、尺寸 / 比例与分辨率立即在本地记忆；后续新建图片节点沿用，关闭重开后保留。
+- 记忆不覆盖已有节点，不复制提示词、参考图片、模型、张数或背景，不改写全局生成偏好；显式传入的节点参数优先。
+
 ## Plugin system
 
 Canvas plugins can contribute node types, rendering, inspectors, serialization, migration, toolbar actions, and optional AI generation capabilities. Built-in and local plugins are managed through the canvas UI.

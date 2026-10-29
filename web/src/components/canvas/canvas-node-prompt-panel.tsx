@@ -4,6 +4,8 @@ import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
+import { inferMediaScale } from "@/lib/media-size";
+import { useCanvasImageSettingsStore } from "@/stores/canvas/use-canvas-image-settings-store";
 import { ModelPicker } from "@/components/model-picker";
 import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -104,7 +106,12 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                                 config={config}
                                 placement="topLeft"
                                 buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                                onConfigChange={(key, value) => {
+                                    onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : key === "size" ? { size: value, imageResolution: inferMediaScale(value) } : { [key]: value });
+                                    if (node.type === CanvasNodeType.Image && (key === "size" || key === "quality")) {
+                                        useCanvasImageSettingsStore.getState().remember({ size: key === "size" ? value : config.size, quality: key === "quality" ? value : config.quality });
+                                    }
+                                }}
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />

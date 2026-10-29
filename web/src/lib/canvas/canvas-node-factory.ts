@@ -1,5 +1,6 @@
 import { getNodeSpec, NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { useCanvasImageSettingsStore } from "@/stores/canvas/use-canvas-image-settings-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { UploadedImage } from "@/services/image-storage";
 import type { UploadedFile } from "@/services/file-storage";
@@ -20,7 +21,7 @@ export function createCanvasNode(type: CanvasNodeTypeId, position: Position, met
         },
         width: spec.width,
         height: spec.height,
-        metadata: { ...spec.metadata, ...metadata },
+        metadata: { ...spec.metadata, ...(type === CanvasNodeType.Image ? useCanvasImageSettingsStore.getState().settings : undefined), ...metadata },
     };
 }
 
