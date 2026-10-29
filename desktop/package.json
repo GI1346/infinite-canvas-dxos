@@ -1,7 +1,7 @@
 {
   "name": "infinite-canvas-dxos",
   "productName": "BlinkFlow",
-  "version": "0.20.14",
+  "version": "0.20.16",
   "description": "无限画布、多维表格、并发生成和中转站自定义协议",
   "author": "GI1346",
   "private": true,

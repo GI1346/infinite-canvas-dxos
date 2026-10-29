@@ -9,15 +9,19 @@ import { assistantGraphSummary, assistantRunMode, assistantRunTargets, assistant
 import type { AiTextMessage } from "@/services/api/image";
 import { selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import type { CanvasGenerationMode, CanvasNodeData } from "@/types/canvas";
-import { assistantDraftWithReferences, assistantReadableDraft, assistantReferenceIds, assistantReferenceToken } from "@/lib/canvas/assistant-inline-references";
+import { assistantDisplayDraft, assistantDraftWithReferences, assistantReadableDraft, assistantReferenceIds, assistantReferenceToken, insertAssistantReferences, type AssistantDraftSelection } from "@/lib/canvas/assistant-inline-references";
+import { buildCanvasResourceReferences } from "@/lib/canvas/canvas-resource-references";
+import { assistantImageParameters, explicitAssistantImageRequirements } from "@/lib/canvas/assistant-image-parameters";
 
 export type CanvasAssistantContext = {
     snapshot: CanvasAgentSnapshot;
     getSnapshot: () => CanvasAgentSnapshot;
     applyOps: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot;
+    undoOps?: () => CanvasAgentSnapshot | null;
+    canUndo?: boolean;
     runNode: (nodeId: string, mode?: CanvasGenerationMode, prompt?: string, signal?: AbortSignal) => Promise<CanvasNodeData | undefined>;
 };
-export type CanvasAssistantMessage = { id: string; role: "user" | "assistant" | "tool" | "error"; text: string; references?: string[]; models?: string[] };
+export type CanvasAssistantMessage = { id: string; role: "user" | "assistant" | "tool" | "error"; text: string; draft?: string; referenceLabels?: Record<string, string>; references?: string[]; models?: string[] };
 export type CanvasAssistantSession = { id: string; projectId: string; title: string; model: string; messages: CanvasAssistantMessage[]; transcript: AiTextMessage[]; references: string[]; models: string[]; turnModels?: string[]; skillId?: string; turnSkillPrompt?: string; draft: string; running: boolean; status: string; pending?: AssistantAction; updatedAt: number };
 export type CanvasAssistantGenerationMode = "manual" | "auto";
 const generationModeKey = "blinkflow:canvas-assistant-generation-mode";
@@ -31,6 +35,7 @@ type CanvasAssistantStore = {
     open: boolean; context: CanvasAssistantContext | null; sessions: CanvasAssistantSession[]; currentId: string; loading: boolean; storageError: string;
     setOpen: (open: boolean) => void; setContext: (context: CanvasAssistantContext | null) => void; addReferences: (ids: string[]) => void;
     removeReference: (id: string) => void; toggleModel: (id: string) => void; setDraft: (draft: string) => void; setModel: (model: string) => void; setSkill: (id?: string) => void;
+    setDraftSelection: (selection: AssistantDraftSelection) => void; getDraftSelection: () => AssistantDraftSelection | undefined;
 
     createSession: () => void; selectSession: (id: string) => void; renameSession: (id: string, title: string) => void; deleteSession: (id: string) => void;
     send: () => Promise<void>; confirm: (accepted: boolean) => Promise<void>; stop: () => void; clearHistory: () => Promise<void>;
@@ -39,6 +44,8 @@ const db = localforage.createInstance({ name: "infinite-canvas", storeName: "can
 const projects = new Map<string, ProjectSessions>();
 const controllers = new Map<string, AbortController>();
 const pendingReferences = new Map<string, string[]>();
+// UI-only caret offsets survive leaving the editor for canvas selection, without persisting DOM ranges.
+const draftSelections = new Map<string, AssistantDraftSelection>();
 let storageEpoch = 0;
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -69,7 +76,7 @@ function patch(projectId: string, sessionId: string, update: (session: CanvasAss
 function append(projectId: string, sessionId: string, role: CanvasAssistantMessage["role"], text: string, extras: Partial<CanvasAssistantMessage> = {}) {
     patch(projectId, sessionId, (session) => ({ ...session, messages: [...session.messages, { id: nanoid(), role, text, ...extras }] }));
 }
-function active() {
+function active(): { context: CanvasAssistantContext; session: CanvasAssistantSession; projectId: string } | null {
     const state = useCanvasAssistantStore.getState(), context = state.context;
     if (!context) return null;
     const project = projectOf(context.snapshot.projectId), session = project.sessions.find((item) => item.id === project.currentId);
@@ -81,7 +88,7 @@ function expandReferences(context: CanvasAssistantContext, ids: string[]) {
     ids.forEach(visit); return [...result];
 }
 function actionName(action: AssistantAction) {
-    return ({ read_canvas: "读取画布", read_assets: "查看素材", read_results: "读取运行结果", apply_workflow: "创建工作流", update_nodes: "更新节点参数", run_nodes: "等待确认生成", final: "完成" })[action.tool];
+    return ({ read_canvas: "读取画布", read_assets: "查看素材", read_results: "读取运行结果", apply_workflow: "创建工作流", update_nodes: "更新节点参数", edit_canvas: "编辑画布", run_nodes: "等待确认生成", final: "完成" })[action.tool];
 }
 function toolMessage(action: AssistantAction, result: AssistantToolResult): AiTextMessage {
     const text = `工具 ${action.tool} 返回：${JSON.stringify(result.value)}`;
@@ -94,21 +101,27 @@ function assertProject(context: CanvasAssistantContext, projectId: string, signa
     if (signal.aborted) throw new DOMException("已停止", "AbortError");
     if (useCanvasAssistantStore.getState().context?.snapshot.projectId !== projectId || context.getSnapshot().projectId !== projectId) throw new Error("当前画布已切换，Agent 已停止操作旧画布");
 }
-async function runGeneration(action: AssistantAction, context: CanvasAssistantContext, projectId: string, signal: AbortSignal): Promise<AssistantToolResult> {
+async function runGeneration(action: AssistantAction, context: CanvasAssistantContext, projectId: string, signal: AbortSignal, userDraft = ""): Promise<AssistantToolResult> {
     assertProject(context, projectId, signal);
-    const targets = assistantRunTargets(action, context), outcomes = [];
+    let targets = assistantRunTargets(action, context);
+    const outcomes = [];
     if (!targets.length) throw new Error("Agent 未指定可运行节点");
     // Validate every target before the first generation request, in either approval mode.
     const runModes = targets.map(assistantRunMode);
+    const requirements = explicitAssistantImageRequirements(userDraft), config = useConfigStore.getState().config;
+    if (Object.keys(requirements).length) {
+        const ops = targets.flatMap((node, index): CanvasAgentOp[] => runModes[index] === "image" && node.type !== "blinkflow:fusion" ? [{ type: "update_node", id: node.id, metadata: assistantImageParameters(requirements, node.metadata || {}, config) }] : []);
+        if (ops.length) { context.applyOps(ops); targets = assistantRunTargets(action, context); }
+    }
     for (const [index, node] of targets.entries()) {
         assertProject(context, projectId, signal);
         const output = await context.runNode(node.id, runModes[index], node.metadata?.composerContent || node.metadata?.prompt || "", signal);
         assertProject(context, projectId, signal);
         const graph = context.getSnapshot();
         const current = output || graph.nodes.find((item) => item.id === node.id);
-        outcomes.push({ id: node.id, exists: Boolean(current), status: current?.metadata?.status || "idle", error: current?.metadata?.errorDetails, images: current?.metadata?.images?.map((image) => ({ id: image.id, status: image.status, error: image.errorDetails })), hasOutput: Boolean(current?.metadata?.storageKey || current?.metadata?.content || current?.metadata?.images?.some((image) => image.status === "success")) });
+        outcomes.push({ id: current?.id || node.id, sourceNodeId: node.id, width: current?.metadata?.naturalWidth, height: current?.metadata?.naturalHeight, parameters: { size: current?.metadata?.size, imageResolution: current?.metadata?.imageResolution }, exists: Boolean(current), status: current?.metadata?.status || "idle", error: current?.metadata?.errorDetails, images: current?.metadata?.images?.map((image) => ({ id: image.id, status: image.status, error: image.errorDetails, width: image.naturalWidth, height: image.naturalHeight })), hasOutput: Boolean(current?.metadata?.storageKey || current?.metadata?.content || current?.metadata?.images?.some((image) => image.status === "success")) });
     }
-    return { value: { outcomes, note: "请按真实结果回答，必要时调用 read_results 进一步查看" } };
+    return { value: { outcomes, note: "id是实际产物ID，sourceNodeId是输入节点。width/height为真实像素；参数不是产物证明。请按真实结果回答，必要时调用 read_results 查看实际产物ID，不要把旧输入图当作新结果。" } };
 }
 async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSession, transcript: AiTextMessage[], controller: AbortController) {
     const { projectId, id } = initial, signal = controller.signal;
@@ -135,7 +148,7 @@ async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSes
                 return;
             }
             let result: AssistantToolResult;
-            try { result = action.tool === "run_nodes" ? await runGeneration(action, context, projectId, signal) : await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal); }
+            try { result = action.tool === "run_nodes" ? await runGeneration(action, context, projectId, signal, session.messages.findLast((item) => item.role === "user")?.draft || "") : await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal); }
             catch (error) { if (signal.aborted) throw error; result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
             assertProject(context, projectId, signal);
             transcript = [...transcript, toolMessage(action, result)];
@@ -180,17 +193,26 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
         const projectId = context.snapshot.projectId;
         if (state.loading) { pendingReferences.set(projectId, [...new Set([...(pendingReferences.get(projectId) || []), ...ids])]); set({ open: true }); return; }
         const value = active(); if (!value) return;
-        patch(projectId, value.session.id, (session) => { const references = [...new Set([...session.references, ...expandReferences(context, ids)])]; return { ...session, references, draft: assistantDraftWithReferences(session.draft, references) }; }); set({ open: true });
+        if (value.session.running || value.session.pending) { set({ open: true }); return; }
+        const additions = expandReferences(context, ids);
+        if (!additions.length) return;
+        patch(projectId, value.session.id, (session) => {
+            const inserted = insertAssistantReferences(session.draft, additions, draftSelections.get(session.id));
+            draftSelections.set(session.id, inserted.selection);
+            return { ...session, draft: inserted.draft, references: assistantReferenceIds(inserted.draft) };
+        }); set({ open: true });
     },
     removeReference: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, draft: session.draft.split(assistantReferenceToken(id)).join(""), references: session.references.filter((item) => item !== id) })); },
     toggleModel: (id) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, models: session.models.includes(id) ? session.models.filter((item) => item !== id) : [...session.models, id] })); },
     setDraft: (draft) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, draft, references: assistantReferenceIds(draft) })); },
+    setDraftSelection: (selection) => { const value = active(); if (value) draftSelections.set(value.session.id, selection); },
+    getDraftSelection: (): AssistantDraftSelection | undefined => { const value = active(); return value ? draftSelections.get(value.session.id) : undefined; },
     setModel: (model) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, model })); },
     setSkill: (skillId) => { const value = active(); if (value && !get().loading && !value.session.running && !value.session.pending) patch(value.projectId, value.session.id, (session) => ({ ...session, skillId })); },
     createSession: () => { const context = get().context; if (!context) return; const projectId = context.snapshot.projectId, project = projectOf(projectId), session = newSession(projectId); project.sessions = [session, ...project.sessions]; project.currentId = session.id; publish(projectId); persist(projectId); },
     selectSession: (id) => { const value = active(); if (!value || !projectOf(value.projectId).sessions.some((session) => session.id === id)) return; projectOf(value.projectId).currentId = id; publish(value.projectId); persist(value.projectId); },
     renameSession: (id, title) => { const value = active(); if (value && title.trim()) patch(value.projectId, id, (session) => ({ ...session, title: title.trim() })); },
-    deleteSession: (id) => { const value = active(); if (!value) return; controllers.get(id)?.abort(); controllers.delete(id); const project = projectOf(value.projectId); project.sessions = project.sessions.filter((session) => session.id !== id); if (!project.sessions.length) project.sessions = [newSession(value.projectId)]; if (project.currentId === id) project.currentId = project.sessions[0].id; publish(value.projectId); persist(value.projectId); },
+    deleteSession: (id) => { const value = active(); if (!value) return; draftSelections.delete(id); controllers.get(id)?.abort(); controllers.delete(id); const project = projectOf(value.projectId); project.sessions = project.sessions.filter((session) => session.id !== id); if (!project.sessions.length) project.sessions = [newSession(value.projectId)]; if (project.currentId === id) project.currentId = project.sessions[0].id; publish(value.projectId); persist(value.projectId); },
     send: async () => {
         const value = active(); if (!value || get().loading || value.session.running || value.session.pending) return;
         const { session, projectId, context } = value;
@@ -205,10 +227,16 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
             if (session.skillId && !skill) throw new Error("当前会话的 Skill 已不存在，请重新选择或取消该 Skill");
             const turnSkillPrompt = buildAssistantSkillPrompt(skill);
             const nodes = context.getSnapshot().nodes;
-            const text = assistantReadableDraft(assistantDraftWithReferences(session.draft, session.references), (id) => nodes.find((node) => node.id === id)?.title || id).trim() || "请分析这些节点", references = [...session.references], models = [...session.models];
+            const draft = assistantDraftWithReferences(session.draft, session.references);
+            const labels = new Map(buildCanvasResourceReferences(nodes).map((item) => [item.nodeId, item.kind === "image" ? item.label : item.title]));
+            const references = assistantReferenceIds(draft), models = [...session.models];
+            const referenceLabels = Object.fromEntries(references.map((id) => [id, labels.get(id) || nodes.find((node) => node.id === id)?.title || "已移除节点"]));
+            const displayText = assistantDisplayDraft(draft, (id) => referenceLabels[id]);
+            const text = assistantReadableDraft(draft, (id) => nodes.find((node) => node.id === id)?.title || id).trim() || "请分析这些节点";
             const user: AiTextMessage = { role: "user", content: `${text}\n本次引用节点ID：${JSON.stringify(references)}\n本次指定生成模型ID：${JSON.stringify(models)}\n当前画布：${JSON.stringify(assistantGraphSummary(context.getSnapshot()))}` };
             let transcript = [...session.transcript, user];
-            patch(projectId, session.id, (item) => ({ ...item, running: true, draft: "", references: [], models: [], turnModels: models, turnSkillPrompt, title: item.messages.length ? item.title : text.split("\n")[0], transcript, pending: undefined, messages: [...item.messages, { id: nanoid(), role: "user", text, references, models }] }));
+            draftSelections.delete(session.id);
+            patch(projectId, session.id, (item) => ({ ...item, running: true, draft: "", references: [], models: [], turnModels: models, turnSkillPrompt, title: item.messages.length ? item.title : displayText.trim().split("\n")[0], transcript, pending: undefined, messages: [...item.messages, { id: nanoid(), role: "user", text: displayText, draft, referenceLabels, references, models }] }));
             if (references.length) {
                 try { const result = await executeAssistantTool({ tool: "read_assets", args: { nodeIds: references } }, context, useConfigStore.getState().config, models, controller.signal); transcript = [...transcript, toolMessage({ tool: "read_assets", args: {} }, result)]; }
                 catch (error) { if (!controller.signal.aborted) append(projectId, session.id, "error", `读取引用失败：${error instanceof Error ? error.message : String(error)}`); }
@@ -229,7 +257,7 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
         if (!accepted) result = { value: { cancelled: true, note: "用户取消生成，已经建好的节点和连线保留，不要重复请求运行同一批节点。" } };
         else {
             try {
-                result = await runGeneration(action, context, projectId, controller.signal);
+                result = await runGeneration(action, context, projectId, controller.signal, session.messages.findLast((item) => item.role === "user")?.draft || "");
             } catch (error) { result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
         }
         if (controller.signal.aborted) return;
@@ -237,5 +265,5 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
         await loop(context, session, [...session.transcript, toolMessage(action, result)], controller);
     },
     stop: () => { const value = active(); if (!value) return; controllers.get(value.session.id)?.abort(); controllers.delete(value.session.id); patch(value.projectId, value.session.id, (session) => ({ ...session, running: false, pending: undefined, status: "Agent 已停止，已提交的生成任务与画布内容保留" })); },
-    clearHistory: async () => { storageEpoch += 1; for (const controller of controllers.values()) controller.abort(); controllers.clear(); projects.clear(); pendingReferences.clear(); await writeQueue.catch(() => undefined); await db.clear(); const context = get().context; set({ sessions: [], currentId: "", loading: false, storageError: "" }); if (context) { projectOf(context.snapshot.projectId); publish(context.snapshot.projectId); } },
+    clearHistory: async () => { storageEpoch += 1; for (const controller of controllers.values()) controller.abort(); controllers.clear(); projects.clear(); pendingReferences.clear(); draftSelections.clear(); await writeQueue.catch(() => undefined); await db.clear(); const context = get().context; set({ sessions: [], currentId: "", loading: false, storageError: "" }); if (context) { projectOf(context.snapshot.projectId); publish(context.snapshot.projectId); } },
 }));

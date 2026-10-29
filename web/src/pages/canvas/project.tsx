@@ -316,7 +316,7 @@ function InfiniteCanvasPage() {
     const viewportRef = useRef(viewport);
     const focusAnimRef = useRef<number | null>(null);
     const pluginHostRef = useRef<CanvasPluginHost | null>(null);
-    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, signal?: AbortSignal) => Promise<void>) | null>(null);
+    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, signal?: AbortSignal) => Promise<string | void>) | null>(null);
     const connectingParamsRef = useRef(connectingParams);
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
@@ -2820,7 +2820,7 @@ function InfiniteCanvasPage() {
                                     : node,
                         ),
                     );
-                    return;
+                    return rootId;
                 }
 
                 if (mode === "video") {
@@ -2833,9 +2833,9 @@ function InfiniteCanvasPage() {
                         id: videoId,
                         type: CanvasNodeType.Video,
                         title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Video",
-                        position: reuseVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
-                        width: reuseVideoNode ? sourceNode.width : spec.width,
-                        height: reuseVideoNode ? sourceNode.height : spec.height,
+                        position: reuseVideoNode ? sourceNode!.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
+                        width: reuseVideoNode ? sourceNode!.width : spec.width,
+                        height: reuseVideoNode ? sourceNode!.height : spec.height,
                         metadata: {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
@@ -2870,7 +2870,7 @@ function InfiniteCanvasPage() {
                     } finally {
                         finishGenerationRequest(videoId, controller);
                     }
-                    return;
+                    return videoId;
                 }
 
                 if (mode === "audio") {
@@ -2883,9 +2883,9 @@ function InfiniteCanvasPage() {
                         id: audioId,
                         type: CanvasNodeType.Audio,
                         title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Audio",
-                        position: reuseAudioNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
-                        width: reuseAudioNode ? sourceNode.width : spec.width,
-                        height: reuseAudioNode ? sourceNode.height : spec.height,
+                        position: reuseAudioNode ? sourceNode!.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
+                        width: reuseAudioNode ? sourceNode!.width : spec.width,
+                        height: reuseAudioNode ? sourceNode!.height : spec.height,
                         metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...buildAudioGenerationMetadata(generationConfig) },
                     };
                     pendingChildIds = [audioId];
@@ -2905,7 +2905,7 @@ function InfiniteCanvasPage() {
                     } finally {
                         finishGenerationRequest(audioId, controller);
                     }
-                    return;
+                    return audioId;
                 }
 
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
@@ -2921,9 +2921,9 @@ function InfiniteCanvasPage() {
                     id: rootId,
                     type: CanvasNodeType.Text,
                     title: branch ? sourceNode!.title : effectivePrompt.slice(0, 32) || "Generated Text",
-                    position: reuseTextNode ? sourceNode.position : { x: parentPosition.x + parentConfig.width + 96, y: parentPosition.y + parentConfig.height / 2 - textConfig.height / 2 },
-                    width: reuseTextNode ? sourceNode.width : textConfig.width,
-                    height: reuseTextNode ? sourceNode.height : textConfig.height,
+                    position: reuseTextNode ? sourceNode!.position : { x: parentPosition.x + parentConfig.width + 96, y: parentPosition.y + parentConfig.height / 2 - textConfig.height / 2 },
+                    width: reuseTextNode ? sourceNode!.width : textConfig.width,
+                    height: reuseTextNode ? sourceNode!.height : textConfig.height,
                     metadata: {
                         prompt: effectivePrompt,
                         status: NODE_STATUS_LOADING,
@@ -3024,6 +3024,7 @@ function InfiniteCanvasPage() {
                         return node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, status: firstText ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: firstText ? undefined : t("canvas.projectPage.generationFailed") } } : node;
                     }),
                 );
+                return rootId;
             } catch (error) {
                 if (!active() || isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
@@ -3045,6 +3046,8 @@ function InfiniteCanvasPage() {
                             : node,
                     ),
                 );
+                // Agent must receive the actual failure, not read an unchanged old source as success.
+                if (signal) throw error;
             } finally {
                 endRun();
                 updateRunningNodeId((current) => current === nodeId ? null : current);

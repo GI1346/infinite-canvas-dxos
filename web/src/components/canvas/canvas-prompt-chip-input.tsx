@@ -10,6 +10,7 @@ import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasImagePreviewDialog } from "@/components/canvas/canvas-image-preview-dialog";
+import type { AssistantDraftSelection } from "@/lib/canvas/assistant-inline-references";
 
 type Props = {
     value: string;
@@ -27,6 +28,8 @@ type Props = {
     containerClassName?: string;
     onReferenceSelect?: (reference: CanvasResourceReference) => boolean;
     imageHoverPreview?: boolean;
+    onSelectionChange?: (selection: AssistantDraftSelection) => void;
+    getSelection?: () => AssistantDraftSelection | undefined;
 };
 export type PromptChipInputHandle = { focus: () => void; openMention: () => void; insertReference: (label: string) => void };
 
@@ -41,11 +44,22 @@ type Token =
 
 // Prompt-panel contentEditable input: @ references embed thumbnail chips instead of plain label text.
 // Serialization converts chips back to reference labels so the generated value matches the former textarea semantics.
-export function CanvasPromptChipInput({ value, references, onChange, onSubmit, onEscape, className, style, placeholder, inputRef, readOnly, ariaLabel, showReferenceTitle, containerClassName, onReferenceSelect, imageHoverPreview }: Props) {
+export function CanvasPromptChipInput({ value, references, onChange, onSubmit, onEscape, className, style, placeholder, inputRef, readOnly, ariaLabel, showReferenceTitle, containerClassName, onReferenceSelect, imageHoverPreview, onSelectionChange, getSelection }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
     const savedRange = useRef<Range | null>(null);
+    const savedSelection = useRef<AssistantDraftSelection | undefined>(undefined);
+    const selectionCallbacks = useRef({ onSelectionChange, getSelection });
+    selectionCallbacks.current = { onSelectionChange, getSelection };
+    const rememberSelection = () => {
+        const editor = editorRef.current, selection = window.getSelection();
+        if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode)) return;
+        const range = selection.getRangeAt(0);
+        savedRange.current = range.cloneRange();
+        savedSelection.current = serializedSelection(editor, range);
+        selectionCallbacks.current.onSelectionChange?.(savedSelection.current);
+    };
     // Track the last value emitted to the parent. An identical focused value is this component's own echo,
     // so skip rebuilding to preserve the caret and IME. Rebuild external changes even while focused.
     const lastEmittedRef = useRef(value);
@@ -69,7 +83,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, o
     const activeLabels = useMemo(() => Array.from(new Set(activeReferences.map((item) => item.label))).sort((a, b) => b.length - a.length), [activeReferences]);
     const tokens = useMemo(() => parseTokens(value, activeLabels), [value, activeLabels]);
     useEffect(() => {
-        const remember = () => { const selection = window.getSelection(); if (selection?.rangeCount && editorRef.current?.contains(selection.anchorNode)) savedRange.current = selection.getRangeAt(0).cloneRange(); };
+        const remember = () => { if (document.activeElement === editorRef.current) rememberSelection(); };
         document.addEventListener("selectionchange", remember);
         return () => document.removeEventListener("selectionchange", remember);
     }, []);
@@ -87,6 +101,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, o
         const editor = editorRef.current;
         if (!editor) return;
         if (document.activeElement === editor && value === lastEmittedRef.current) return;
+        const focused = document.activeElement === editor;
+        const caret = selectionCallbacks.current.getSelection?.() || savedSelection.current;
         editor.textContent = "";
         tokens.forEach((token) => {
             if (token.type === "text") {
@@ -99,6 +115,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, o
         });
         lastEmittedRef.current = value;
         savedRange.current = null;
+        savedSelection.current = caret;
+        if (focused && caret) placeSerializedSelection(editor, caret);
     }, [tokens, referenceByLabel, theme, value, showReferenceTitle]);
 
     const emit = (next: string) => {
@@ -109,8 +127,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, o
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
-        const selection = window.getSelection();
-        if (selection?.rangeCount && editor.contains(selection.anchorNode)) savedRange.current = selection.getRangeAt(0).cloneRange();
+        rememberSelection();
         emit(serializeEditor(editor));
         syncMention();
     };
@@ -158,14 +175,17 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, o
         closeMention();
         emit(serializeEditor(editor));
         savedRange.current = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+        rememberSelection();
     };
 
     const restoreCaret = () => {
         const editor = editorRef.current, selection = window.getSelection();
         if (!editor) return;
-        if (selection?.rangeCount && editor.contains(selection.anchorNode)) savedRange.current = selection.getRangeAt(0).cloneRange();
+        rememberSelection();
+        const caret = selectionCallbacks.current.getSelection?.() || savedSelection.current;
         editor.focus();
-        if (savedRange.current && editor.contains(savedRange.current.startContainer)) { selection?.removeAllRanges(); selection?.addRange(savedRange.current.cloneRange()); }
+        if (caret) placeSerializedSelection(editor, caret);
+        else if (savedRange.current && editor.contains(savedRange.current.startContainer)) { selection?.removeAllRanges(); selection?.addRange(savedRange.current.cloneRange()); }
         else if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) placeCaretAtEnd(editor);
     };
     useImperativeHandle(inputRef, () => ({
@@ -272,7 +292,10 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, o
                     }
                     requestAnimationFrame(syncMention);
                 }}
-                onBlur={() => window.setTimeout(closeMention, 120)}
+                onFocus={() => { if (getSelection) { const caret = getSelection(); if (caret) placeSerializedSelection(editorRef.current!, caret); } }}
+                onMouseUp={rememberSelection}
+                onKeyUp={rememberSelection}
+                onBlur={() => { rememberSelection(); window.setTimeout(closeMention, 120); }}
             />
             {mention && candidates.length ? (
                 <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} showTitle={showReferenceTitle} onImageHover={showHover} onImageLeave={hideHover} />
@@ -402,6 +425,36 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
 
 function serializeEditor(editor: HTMLElement) {
     return serializeNodes(editor.childNodes).replace(/﻿/g, "");
+}
+
+function serializedSelection(editor: HTMLElement, range: Range): AssistantDraftSelection {
+    const prefix = document.createRange(); prefix.selectNodeContents(editor);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    const start = serializeNodes(prefix.cloneContents().childNodes).replace(/﻿/g, "").length;
+    prefix.setEnd(range.endContainer, range.endOffset);
+    return { start, end: serializeNodes(prefix.cloneContents().childNodes).replace(/﻿/g, "").length };
+}
+
+function placeSerializedSelection(editor: HTMLElement, selection: AssistantDraftSelection) {
+    const point = (offset: number): [Node, number] => {
+        const walker = document.createTreeWalker(editor, window.NodeFilter.SHOW_TEXT | window.NodeFilter.SHOW_ELEMENT);
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+            if (node.parentElement?.closest("[data-ref-label]")) continue;
+            if (node.nodeType === Node.TEXT_NODE) {
+                const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, node.textContent?.length || 0);
+                const bounds = serializedSelection(editor, range);
+                if (offset >= bounds.start && offset <= bounds.end) return [node, Math.min(offset - bounds.start, node.textContent?.length || 0)];
+            } else if (node instanceof HTMLElement && (node.dataset.refLabel || node.tagName === "BR")) {
+                const range = document.createRange(); range.selectNode(node);
+                const bounds = serializedSelection(editor, range);
+                if (offset <= bounds.end) return [node.parentNode!, Array.from(node.parentNode!.childNodes).indexOf(node as ChildNode) + (offset > bounds.start ? 1 : 0)];
+            }
+        }
+        return [editor, offset <= 0 ? 0 : editor.childNodes.length];
+    };
+    const range = document.createRange(); range.setStart(...point(selection.start)); range.setEnd(...point(selection.end));
+    const live = window.getSelection(); live?.removeAllRanges(); live?.addRange(range);
 }
 
 function serializeNodes(nodes: NodeListOf<ChildNode>) {

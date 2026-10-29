@@ -47,6 +47,14 @@ See [Codex App Plugin](/docs/overview/codex-app-plugin) for installation and usa
 - 提取选区的结果加入其他参考图后保留目标回贴位置；来源明确且唯一的旧冲突可恢复选区，融合继续校验原图并保留选区外像素。
 - 多张外部图片拖入按当前宫格列数和间距排列，保留导入顺序、比例和独立节点。
 
+## 已确认的 BlinkFlow 0.20.16 交互
+
+- Agent 保留手动确认与自动生成模式；可创建、编辑、移动、等比缩放、复制、删除、选择、分组、宫格排列和连接节点，调整视图，提取选区并运行本地融合。编辑操作可撤销，后续手工修改及新生成结果受保护。
+- 首次生成前将明确比例与分辨率换算为真实请求尺寸，按实际产物节点回读像素与状态；结果不符时如实反馈，不自动再次付费生成。
+- 节点生成面板按中转站 → 模型两级选择，读取当前渠道模型；当前项加深并勾选，长名称可完整换行。
+- 画布添加图片引用恢复当前会话最后编辑光标；Agent 主浮窗、大编辑窗和输入区支持调整大小，大编辑窗不遮挡画布选图。
+- 新发送消息保留换行、空行和行内图片引用顺序，支持逐条复制文字；普通和大编辑窗共享草稿与光标。
+
 ## Plugin system
 
 Canvas plugins can contribute node types, rendering, inspectors, serialization, migration, toolbar actions, and optional AI generation capabilities. Built-in and local plugins are managed through the canvas UI.

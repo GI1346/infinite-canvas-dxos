@@ -51,7 +51,7 @@ async function main() {
  await click(label("全屏编辑 Agent 输入")); const expanded=label("Agent 全屏输入文字"); assert.equal(expanded.querySelectorAll("[data-ref-label] img").length,2); assert.equal(expanded.getAttribute("contenteditable"),"true");
  assert.deepEqual([...expanded.querySelectorAll("[data-ref-label]")].map(el=>el.textContent),["@图片1","@图片2"]); assert([...expanded.querySelectorAll("[data-ref-label] img")].every(el=>el.classList.contains("size-[1em]")),"fullscreen scales thumbnails with its own text size");
  expanded.focus(); const end=expanded.lastChild!; caret(end,end.textContent!.length); const text=document.createTextNode("\n已修改全文"); expanded.append(text); caret(text,text.length); await fire(expanded,new Event("input",{bubbles:true})); assert.equal(session().draft,saved+"\n已修改全文");
- await click(label("Agent 全屏输入文字").closest(".ant-modal")!.querySelector<HTMLElement>(".ant-modal-footer button")!);
+ await click(document.querySelector<HTMLElement>("[data-assistant-editor] footer button")!);
  assert.equal(editor.querySelectorAll("[data-ref-label]").length,2); assert(editor.textContent?.includes("已修改全文"));
  assert(assistantReadableDraft(session().draft,(id)=>id==="img1"?"产品1":"产品2").includes("把【产品1（节点ID:img1）】"));
  // Atomic deletion removes only the referenced occurrence and updates attached IDs.

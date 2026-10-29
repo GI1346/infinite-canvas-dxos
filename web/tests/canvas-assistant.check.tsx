@@ -139,11 +139,11 @@ async function main() {
     const liveModel = [...host.querySelectorAll("[data-assistant-menu] button")].find((button) => button.textContent?.includes("video-live（视频）"))!; await click(liveModel); assert(current().models.some((id) => id === encodeChannelModel("video", "video-live")));
     await click(host.querySelector('[data-assistant-models]')!); await act(async () => useConfigStore.setState({ config })); assert(!host.querySelector("[data-assistant-menu]")?.textContent?.includes("video-live"));
     await click(host.querySelector('[aria-label="关闭模型菜单"]')!);
-    const remove = host.querySelector('[aria-label="移除引用 skill-input"]')!; await click(remove); assert(!current().references.includes("skill-input"));
+    await act(async () => state().removeReference("skill-input")); assert(!current().references.includes("skill-input"));
     await fire(panel, new WheelEvent("wheel", { bubbles: true, deltaY: 100 })); assert.equal(bubbled, 0);
     const handle = host.querySelector('[data-assistant-drag-handle]')!, beforeLeft = panel.style.left;
     await fire(handle, new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 700, clientY: 100 })); await fire(window, new PointerEvent("pointermove", { bubbles: true, clientX: 600, clientY: 130 })); await fire(window, new PointerEvent("pointerup", { bubbles: true, button: 0 })); assert.notEqual(panel.style.left, beforeLeft);
-    const beforeHeight = panel.style.height; await fire(host.querySelector('[aria-label="调整 Agent 浮窗高度"]')!, new PointerEvent("pointerdown", { bubbles: true, button: 0, clientY: 300 })); await fire(window, new PointerEvent("pointermove", { bubbles: true, clientY: 220 })); await fire(window, new PointerEvent("pointerup", { bubbles: true })); assert.notEqual(panel.style.height, beforeHeight);
+    const beforeHeight = panel.style.height; await fire(host.querySelector('[data-assistant-resize="s"]')!, new PointerEvent("pointerdown", { bubbles: true, button: 0, clientY: 300 })); await fire(window, new PointerEvent("pointermove", { bubbles: true, clientY: 220 })); await fire(window, new PointerEvent("pointerup", { bubbles: true })); assert.notEqual(panel.style.height, beforeHeight);
     await act(async () => useThemeStore.setState({ theme: "dark" })); const expectedColor = document.createElement("span"); expectedColor.style.color = canvasThemes.dark.node.text; assert.equal(panel.style.color, expectedColor.style.color);
     document.removeEventListener("pointerdown", countBubble); document.removeEventListener("wheel", countBubble);
     console.log("PASS live menus update/remove channels, models and chips click with full pointer sequence; panel stops canvas events; drag/resize and dark theme work.");

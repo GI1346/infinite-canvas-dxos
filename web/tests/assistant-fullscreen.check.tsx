@@ -31,13 +31,13 @@ async function main() {
     await click(label("全屏编辑 Agent 输入"));
     assert(modal()?.hasAttribute("data-canvas-overlay")); assert(modal()?.hasAttribute("data-canvas-no-zoom"));
     assert.equal(field().textContent, original); assert.equal(field().getAttribute("contenteditable"), "true");
-    const dialog = field().closest<HTMLElement>(".ant-modal")!;
-    assert.equal(dialog.style.width, "100vw"); assert.equal(dialog.style.height, "100dvh");
+    const dialog = field().closest<HTMLElement>("[data-assistant-editor]")!;
+    assert(parseFloat(dialog.style.width) < window.innerWidth); assert(parseFloat(dialog.style.height) < window.innerHeight); assert(!document.querySelector(".ant-modal-mask"));
     const edited = original.replace("产品设计草稿", "修改后的完整草稿") + "末尾新内容\n第二行 ";
     await input(field(), edited); assert.equal(current().draft, edited); assert.equal((label("Agent 消息") as HTMLDivElement).textContent, edited);
     for (const key of ["Enter", " "]) { const event = new KeyboardEvent("keydown", { key, code: key === "Enter" ? "Enter" : "Space", bubbles: true, cancelable: true }); await fire(field(), event); assert.equal(event.defaultPrevented, false); }
     assert.equal(network, 0); assert.equal(current().messages.length, 0); assert.equal(current().draft, edited);
-    console.log("PASS full-viewport editable rich-text input, 500-line draft, live two-way store synchronization; Enter/Space never submit.");
+    console.log("PASS nonmodal resizable rich-text input, 500-line draft, live two-way store synchronization; Enter/Space never submit.");
 
     let escaped = 0; const counter = () => escaped++;
     for (const type of ["pointerdown", "wheel", "keydown"]) document.addEventListener(type, counter);
@@ -51,7 +51,7 @@ async function main() {
     await click(label("全屏编辑 Agent 输入")); assert.equal(field().textContent, edited);
     await fire(field(), new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     assert.equal(modal(), null); assert.equal(current().draft, edited);
-    await click(label("全屏编辑 Agent 输入")); await click(modal()!.querySelector<HTMLButtonElement>(".ant-modal-close")!);
+    await click(label("全屏编辑 Agent 输入")); await click(label("关闭 Agent 大窗口编辑"));
     assert.equal(modal(), null); assert.equal(current().draft, edited);
     console.log("PASS pointer/wheel/keyboard isolation; Done/close/Escape retain edits and reopening preserves full text.");
 

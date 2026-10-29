@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 
 import { flushSync } from "react-dom";
 
@@ -13,7 +13,7 @@ import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } fro
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasConnection, CanvasNodeData, ContextMenuState, ViewportTransform } from "@/types/canvas";
 
-type GenerateNodeRef = MutableRefObject<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, signal?: AbortSignal) => Promise<void>) | null>;
+type GenerateNodeRef = MutableRefObject<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, signal?: AbortSignal) => Promise<string | void>) | null>;
 
 type AgentBridgeParams = {
     projectId: string;
@@ -43,12 +43,16 @@ export function useAgentBridge(params: AgentBridgeParams) {
     const { projectId, title, nodes, connections, selectedNodeIds, viewport, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId, setViewport, setContextMenu } =
         params;
     const setContext = useCanvasAssistantStore((state) => state.setContext);
-    const [agentUndoSnapshot, setAgentUndoSnapshot] = useState<CanvasAgentSnapshot | null>(null);
+    const agentUndoSnapshot = useRef<Array<{ before: CanvasAgentSnapshot; after: CanvasAgentSnapshot }>>([]);
+    const undoProject = useRef(projectId);
+    const [undoVersion, setUndoVersion] = useState(0);
+    if (undoProject.current !== projectId) { undoProject.current = projectId; agentUndoSnapshot.current = []; }
     const projectTitle = title || i18n.t("canvas.project.untitled");
 
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(() => ({ projectId, title: projectTitle, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }), [connections, projectTitle, nodes, projectId, selectedNodeIds, viewport]);
     const applyAgentOps = useCallback(
         (ops?: CanvasAgentOp[]) => {
+            if (undoProject.current !== projectId) throw new DOMException("画布已切换", "AbortError");
             const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
             const before = { projectId, title: projectTitle, nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
             const generationOps = safeOps.filter((op): op is Extract<CanvasAgentOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
@@ -56,11 +60,14 @@ export function useAgentBridge(params: AgentBridgeParams) {
                 before,
                 safeOps.filter((op) => op.type !== "run_generation"),
             );
+            const last = agentUndoSnapshot.current.at(-1);
+            // Native generation / manual edits must never be erased by an older Agent undo.
+            if (last && (last.after.nodes !== before.nodes || last.after.connections !== before.connections)) agentUndoSnapshot.current = [];
             nodesRef.current = next.nodes;
             connectionsRef.current = next.connections;
             selectedNodeIdsRef.current = new Set(next.selectedNodeIds);
             viewportRef.current = next.viewport;
-            setAgentUndoSnapshot(before);
+            if (next.nodes !== before.nodes || next.connections !== before.connections || next.viewport !== before.viewport || next.selectedNodeIds !== before.selectedNodeIds) { agentUndoSnapshot.current.push({ before, after: next }); setUndoVersion((value) => value + 1); }
             setNodes(next.nodes);
             setConnections(next.connections);
             setSelectedNodeIds(new Set(next.selectedNodeIds));
@@ -81,20 +88,25 @@ export function useAgentBridge(params: AgentBridgeParams) {
         [projectTitle, projectId],
     );
     const undoAgentOps = useCallback(() => {
-        if (!agentUndoSnapshot) return null;
-        nodesRef.current = agentUndoSnapshot.nodes;
-        connectionsRef.current = agentUndoSnapshot.connections;
-        selectedNodeIdsRef.current = new Set(agentUndoSnapshot.selectedNodeIds);
-        viewportRef.current = agentUndoSnapshot.viewport;
-        setNodes(agentUndoSnapshot.nodes);
-        setConnections(agentUndoSnapshot.connections);
-        setSelectedNodeIds(new Set(agentUndoSnapshot.selectedNodeIds));
+        if (undoProject.current !== projectId) return null;
+        const entry = agentUndoSnapshot.current.at(-1);
+        if (!entry) return null;
+        if (entry.after.nodes !== nodesRef.current || entry.after.connections !== connectionsRef.current) { agentUndoSnapshot.current = []; setUndoVersion((value) => value + 1); return null; }
+        agentUndoSnapshot.current.pop();
+        const previous = { ...entry.before, viewport: viewportRef.current === entry.after.viewport ? entry.before.viewport : viewportRef.current, selectedNodeIds: JSON.stringify([...selectedNodeIdsRef.current]) === JSON.stringify(entry.after.selectedNodeIds) ? entry.before.selectedNodeIds : [...selectedNodeIdsRef.current].filter((id) => entry.before.nodes.some((node) => node.id === id)) };
+        nodesRef.current = previous.nodes;
+        connectionsRef.current = previous.connections;
+        selectedNodeIdsRef.current = new Set(previous.selectedNodeIds);
+        viewportRef.current = previous.viewport;
+        setNodes(previous.nodes);
+        setConnections(previous.connections);
+        setSelectedNodeIds(new Set(previous.selectedNodeIds));
         setSelectedConnectionId(null);
-        setViewport(agentUndoSnapshot.viewport);
+        setViewport(previous.viewport);
         setContextMenu(null);
-        setAgentUndoSnapshot(null);
-        return { ...agentUndoSnapshot, projectId, title: projectTitle };
-    }, [agentUndoSnapshot, projectTitle, projectId]);
+        setUndoVersion((value) => value + 1);
+        return { ...previous, projectId, title: projectTitle };
+    }, [projectTitle, projectId]);
 
     const getSnapshot = useCallback((): CanvasAgentSnapshot => ({ projectId, title: projectTitle, nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: [...selectedNodeIdsRef.current], viewport: viewportRef.current }), [projectId, projectTitle]);
     const runNode = useCallback(async (nodeId: string, mode?: CanvasNodeGenerationMode, prompt?: string, signal?: AbortSignal) => {
@@ -114,25 +126,25 @@ export function useAgentBridge(params: AgentBridgeParams) {
         if (source.metadata?.status === "loading") throw new Error("节点正在运行，请等待完成");
         const ids = new Set(before.nodes.map((node) => node.id));
         // Stop the Agent immediately even if a provider ignores abort; the native runner also guards its writes.
-        await new Promise<void>((resolve, reject) => {
+        const outputId = await new Promise<string | void>((resolve, reject) => {
             const abort = () => reject(new DOMException("Agent 任务已停止", "AbortError"));
             signal?.addEventListener("abort", abort, { once: true });
             Promise.resolve().then(() => {
                 assertActive();
-                return generateNodeRef.current!(nodeId, mode || source.metadata?.generationMode || (source.type === "video" ? "video" : source.type === "text" ? "text" : "image"), prompt ?? source.metadata?.composerContent ?? source.metadata?.prompt ?? "", signal);
+                return generateNodeRef.current!(nodeId, mode || source.metadata?.generationMode || (source.type === "video" ? "video" : source.type === "text" ? "text" : source.type === "audio" ? "audio" : "image"), prompt ?? source.metadata?.composerContent ?? source.metadata?.prompt ?? "", signal);
             }).then(resolve, reject).finally(() => signal?.removeEventListener("abort", abort));
         });
         assertActive();
         // Commit final React state before the tool reads the outcome; never report the input as a generated result.
         flushSync(() => { setNodes((current) => { nodesRef.current = current; return current; }); setConnections((current) => { connectionsRef.current = current; return current; }); });
         const after = getSnapshot();
-        const output = after.nodes.find((node) => !ids.has(node.id) && after.connections.some((edge) => edge.fromNodeId === nodeId && edge.toNodeId === node.id));
+        const output = outputId ? after.nodes.find((node) => node.id === outputId) : after.nodes.find((node) => !ids.has(node.id) && after.connections.some((edge) => edge.fromNodeId === nodeId && edge.toNodeId === node.id));
         const current = after.nodes.find((node) => node.id === nodeId);
         if (!output && !current) throw new Error("生成节点已删除，未导入结果");
         if (!output && current === source) throw new Error("生成未启动，请检查模型、渠道及提示词");
         return output || current;
     }, [getSnapshot, applyAgentOps, projectId]);
-    useEffect(() => { setContext({ snapshot: agentSnapshot, getSnapshot, applyOps: applyAgentOps, runNode }); }, [agentSnapshot, getSnapshot, applyAgentOps, runNode, setContext]);
+    useEffect(() => { const last = agentUndoSnapshot.current.at(-1); setContext({ snapshot: agentSnapshot, getSnapshot, applyOps: applyAgentOps, undoOps: undoAgentOps, canUndo: Boolean(last && last.after.nodes === nodesRef.current && last.after.connections === connectionsRef.current), runNode }); }, [agentSnapshot, getSnapshot, applyAgentOps, undoAgentOps, undoVersion, runNode, setContext]);
     useEffect(() => () => setContext(null), [projectId, setContext]);
 
     return { applyAgentOps };
