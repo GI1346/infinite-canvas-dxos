@@ -1,5 +1,6 @@
 import axios from "axios";
 import localforage from "localforage";
+import { prepareRelayReferences } from "./relay-reference-images";
 import { buildApiUrl, resolveModelChannel, modelOptionName, RELAY_IMAGE_URL, RELAY_TASK_URL, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 
 export const relayTasks = localforage.createInstance({ name: "infinite-canvas", storeName: "relay_tasks" });
@@ -53,13 +54,17 @@ export async function waitRelayImage(task: RelayTask, apiKey: string, signal?: A
 export async function requestRelayImage(config: AiConfig, prompt: string, references: string[], signal?: AbortSignal) {
     const channel = resolveModelChannel(config, config.model || config.imageModel), baseUrl = relayTaskBase(channel)!;
     if (signal?.aborted) throw new DOMException("已取消提交", "AbortError");
+    const requestPrompt = [config.systemPrompt, prompt].filter(Boolean).join("\n");
+    const preparedReferences = await prepareRelayReferences(references, (images) => JSON.stringify(relayImageInput(config, requestPrompt, images)), signal);
+    if (signal?.aborted) throw new DOMException("已取消提交", "AbortError");
     let data;
     try {
-        ({ data } = await axios.post(buildApiUrl(baseUrl, "/tasks"), relayImageInput(config, [config.systemPrompt, prompt].filter(Boolean).join("\n"), references), {
+        ({ data } = await axios.post(buildApiUrl(baseUrl, "/tasks"), relayImageInput(config, requestPrompt, preparedReferences), {
             headers: { Authorization: `Bearer ${channel.apiKey.trim()}`, "Idempotency-Key": crypto.randomUUID() }, signal, timeout: 10 * 60_000,
         }));
     } catch (error) {
         if (signal?.aborted) throw new DOMException("已取消提交", "AbortError");
+        if (axios.isAxiosError(error) && error.response?.status === 413) throw new Error(`生图渠道“${channel.name}”拒绝接收：本次请求超过服务端上传限制（HTTP 413）。请减少参考图或联系中转站调整限制，未自动重复提交。`);
         if (axios.isAxiosError(error)) throw new Error(`生图渠道“${channel.name}”提交失败（HTTP ${error.response?.status || "网络错误"}）：${error.response?.data?.error?.message || error.message}`);
         throw error;
     }
