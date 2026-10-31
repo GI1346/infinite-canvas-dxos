@@ -7,7 +7,7 @@ export function validateCallProtocol(value: unknown): CanvasCallProtocol {
     if (!value || typeof value !== "object") throw new Error("协议必须是 JSON 对象");
     const p = value as CanvasCallProtocol;
     if (p.format !== "canvas-call/v1") throw new Error("format 必须是 canvas-call/v1（不是 DX 协议）");
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(p.id)) throw new Error("id 请使用小写字母、数字、下划线或横线");
+    if (typeof p.id !== "string" || !/^[a-z0-9][a-z0-9_-]*$/.test(p.id)) throw new Error("id 请使用小写字母、数字、下划线或横线");
     if (typeof p.label !== "string" || !p.label.trim()) throw new Error("请填写协议名称 label");
     if (!["image", "video", "text", "audio"].includes(p.capability)) throw new Error("capability 必须是 image/video/text/audio");
     if (typeof p.script !== "string" || !p.script.trim()) throw new Error("script 不能为空");

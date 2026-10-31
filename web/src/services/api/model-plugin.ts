@@ -254,7 +254,7 @@ export function getPluginTemplates(): Record<ModelCapability, PluginTemplate[]> 
  * @param {string} model
  * @param {string} baseUrl
  * @param {string} apiKey
- * @param {function} request - raw HTTP helper; relative urls join baseUrl without /v1
+ * @param {function} request - raw HTTP helper; absolute URLs preserve their path and relative URLs use buildApiUrl
  * @returns {Promise<string[]>} image URLs or data URLs
  */
 async function generateImage({
@@ -274,7 +274,7 @@ async function generateImage({
   if (images.length === 0) {
     const data = await request({
       method: "post",
-      url: \`\${baseUrl}/v1/images/generations\`,
+      url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/images/generations\`,
       headers: {
         "Content-Type": "application/json",
         Authorization: \`Bearer \${apiKey}\`,
@@ -286,7 +286,7 @@ async function generateImage({
         size: size,
         quality: quality,
         background: background,
-        response_format: "b64_json",
+        ...(!/gpt-image/.test(model) ? { response_format: "b64_json" } : {}),
       },
     });
     const urls = [];
@@ -300,17 +300,17 @@ async function generateImage({
   form.set("model", model);
   form.set("prompt", prompt);
   form.set("n", String(count));
-  form.set("size", size);
-  form.set("quality", quality);
-  form.set("background", background);
-  form.set("response_format", "b64_json");
+  if (size) form.set("size", size);
+  if (quality) form.set("quality", quality);
+  if (background) form.set("background", background);
+  if (!/gpt-image/.test(model)) form.set("response_format", "b64_json");
   const imageField = images.length > 1 ? "image[]" : "image";
   for (const dataUrl of images) {
     form.append(imageField, await (await fetch(dataUrl)).blob(), "ref.png");
   }
   const edited = await request({
     method: "post",
-    url: \`\${baseUrl}/v1/images/edits\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/images/edits\`,
     headers: {
       Authorization: \`Bearer \${apiKey}\`,
     },
@@ -351,10 +351,6 @@ return await generateImage({
  * @param {function} request
  * @returns {Promise<string[]>} image data URLs
  */
-function gcd(a, b) {
-  return b ? gcd(b, a % b) : a;
-}
-
 async function generateImage({
   prompt,
   images,
@@ -381,14 +377,15 @@ async function generateImage({
     }
   }
 
-  let aspectRatio = "1:1";
+  let aspectRatio;
   if (size && size !== "auto") {
     const pixels = size.match(/^(\\d+)x(\\d+)$/);
     if (pixels) {
       const width = Number(pixels[1]);
       const height = Number(pixels[2]);
-      const divisor = gcd(width, height);
-      aspectRatio = \`\${width / divisor}:\${height / divisor}\`;
+      const ratios = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
+      const distance = (ratio) => { const [w,h] = ratio.split(":").map(Number); return Math.abs(w / h - width / height); };
+      aspectRatio = ratios.reduce((best, ratio) => distance(ratio) < distance(best) ? ratio : best);
     } else if (size.includes(":")) {
       aspectRatio = size;
     }
@@ -400,7 +397,7 @@ async function generateImage({
   for (let i = 0; i < n; i++) {
     const data = await request({
       method: "post",
-      url: \`\${baseUrl}/v1beta/models/\${model}:generateContent\`,
+      url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1beta/models/\${model}:generateContent\`,
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey,
@@ -520,7 +517,7 @@ async function generateVideo({
   };
   const task = await request({
     method: "post",
-    url: \`\${baseUrl}/v1/videos\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/videos\`,
     headers,
     data: form,
   });
@@ -529,7 +526,7 @@ async function generateVideo({
     async () => {
       const state = await request({
         method: "get",
-        url: \`\${baseUrl}/v1/videos/\${task.id}\`,
+        url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/videos/\${task.id}\`,
         headers,
       });
       if (state.status === "failed" || state.status === "cancelled") {
@@ -541,7 +538,7 @@ async function generateVideo({
       if (state.status === "completed") {
         return await request({
           method: "get",
-          url: \`\${baseUrl}/v1/videos/\${task.id}/content\`,
+          url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/videos/\${task.id}/content\`,
           headers,
           responseType: "blob",
         });
@@ -678,7 +675,7 @@ async function generateVideo({
   };
   const op = await request({
     method: "post",
-    url: \`\${baseUrl}/v1beta/models/\${model}:predictLongRunning\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1beta/models/\${model}:predictLongRunning\`,
     headers,
     data: {
       instances: [instance],
@@ -695,7 +692,7 @@ async function generateVideo({
   return await poll(
     () => request({
       method: "get",
-      url: \`\${baseUrl}/v1beta/\${op.name}\`,
+      url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1beta/\${op.name}\`,
       headers,
     }),
     (state) => {
@@ -759,7 +756,7 @@ async function generateAudio({
 }) {
   return await request({
     method: "post",
-    url: \`\${baseUrl}/v1/audio/speech\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/audio/speech\`,
     headers: {
       "Content-Type": "application/json",
       Authorization: \`Bearer \${apiKey}\`,
@@ -789,15 +786,15 @@ return await generateAudio({
             label: i18n.t("modelPlugin.templates.gemini"),
             script: `/**
  * Gemini TTS: POST models/{model}:generateContent with AUDIO modality.
- * Audio bytes are returned in inlineData.data (base64 PCM).
+ * Return the response audio MIME; wrap Gemini L16 as WAV rather than mislabel raw PCM as MP3.
  * @param {string} prompt - text to speak
  * @param {object} params
- * @param {string} params.voice - prebuilt voice name
+ * UI voices are OpenAI names, not Gemini voices. This template uses Gemini Kore; edit it from provider documentation.
  * @param {string} model
  * @param {string} baseUrl
  * @param {string} apiKey
  * @param {function} request
- * @returns {Promise<{data: string}>}
+ * @returns {Promise<Blob>}
  */
 async function generateAudio({
   prompt,
@@ -811,7 +808,7 @@ async function generateAudio({
 }) {
   const data = await request({
     method: "post",
-    url: \`\${baseUrl}/v1beta/models/\${model}:generateContent\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1beta/models/\${model}:generateContent\`,
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
@@ -828,7 +825,7 @@ async function generateAudio({
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: {
-              voiceName: voice,
+              voiceName: "Kore",
             },
           },
         },
@@ -842,7 +839,20 @@ async function generateAudio({
     if (audio && audio.data) break;
   }
   if (!audio || !audio.data) throw new Error("Gemini did not return audio");
-  return { data: audio.data };
+  const mime = audio.mimeType || audio.mime_type;
+  if (!mime || !mime.startsWith("audio/")) throw new Error("Missing audio MIME type");
+  const bytes = Uint8Array.from(atob(audio.data), (char) => char.charCodeAt(0));
+  if (!/^audio\\/l16/i.test(mime)) return new Blob([bytes], { type: mime });
+  // Gemini generateContent L16 is mono 16-bit little-endian PCM; wrap it as playable WAV.
+  const rate = Number(mime.match(/rate=(\\d+)/i)?.[1] || 24000);
+  if (bytes.length % 2 || !Number.isFinite(rate) || rate <= 0) throw new Error("Invalid Gemini PCM audio");
+  const header = new ArrayBuffer(44), view = new DataView(header);
+  const ascii = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
+  ascii(0, "RIFF"); view.setUint32(4, 36 + bytes.length, true); ascii(8, "WAVE"); ascii(12, "fmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ascii(36, "data"); view.setUint32(40, bytes.length, true);
+  return new Blob([header, bytes], { type: "audio/wav" });
 }
 
 return await generateAudio({
@@ -880,7 +890,10 @@ async function generateText({
 }) {
   const body = {
     model: model,
-    input: messages,
+    input: messages.map((message) => ({
+      role: message.role,
+      content: typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? { type: "input_text", text: part.text } : { type: "input_image", image_url: part.image_url.url }),
+    })),
   };
   if (reasoningEffort && reasoningEffort !== "auto") {
     body.reasoning = {
@@ -889,7 +902,7 @@ async function generateText({
   }
   const data = await request({
     method: "post",
-    url: \`\${baseUrl}/v1/responses\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1/responses\`,
     headers: {
       "Content-Type": "application/json",
       Authorization: \`Bearer \${apiKey}\`,
@@ -899,7 +912,7 @@ async function generateText({
   const text = data.output_text
     || (data.output || []).flatMap((o) => o.content || []).map((c) => c.text || "").join("")
     || "";
-  onDelta(text);
+  onDelta?.(text);
   return text;
 }
 
@@ -917,7 +930,7 @@ return await generateText({
             label: i18n.t("modelPlugin.templates.gemini"),
             script: `/**
  * Gemini text: POST models/{model}:generateContent.
- * System messages are skipped in contents; systemPrompt goes to systemInstruction.
+ * System messages go to systemInstruction; text and image data URLs retain their original order.
  * @param {{role: string, content: string}[]} messages
  * @param {string} systemPrompt
  * @param {string} model
@@ -937,24 +950,23 @@ async function generateText({
   onDelta,
 }) {
   const contents = [];
+  const system = [];
   for (const message of messages) {
-    if (message.role === "system") continue;
-    contents.push({
-      role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.content }],
+    const parts = typeof message.content === "string" ? [{ text: message.content }] : message.content.map((part) => {
+      if (part.type === "text") return { text: part.text };
+      const match = part.image_url.url.match(/^data:([^;]+);base64,([\\s\\S]+)$/);
+      if (!match) throw new Error("Gemini text template requires image data URLs; adapt remote media to the provider documentation");
+      return { inline_data: { mime_type: match[1], data: match[2] } };
     });
+    if (message.role === "system") { system.push(...parts); continue; }
+    contents.push({ role: message.role === "assistant" ? "model" : "user", parts });
   }
-  const body = {
-    contents: contents,
-  };
-  if (systemPrompt) {
-    body.systemInstruction = {
-      parts: [{ text: systemPrompt }],
-    };
-  }
+  const body = { contents };
+  if (!system.length && systemPrompt) system.push({ text: systemPrompt });
+  if (system.length) body.systemInstruction = { parts: system };
   const data = await request({
     method: "post",
-    url: \`\${baseUrl}/v1beta/models/\${model}:generateContent\`,
+    url: \`\${baseUrl.trim().replace(/\\/+$/, "").replace(/\\/v1(?:beta)?$/i, "")}/v1beta/models/\${model}:generateContent\`,
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
@@ -965,7 +977,7 @@ async function generateText({
   for (const part of data.candidates?.[0]?.content?.parts || []) {
     text += part.text || "";
   }
-  onDelta(text);
+  onDelta?.(text);
   return text;
 }
 

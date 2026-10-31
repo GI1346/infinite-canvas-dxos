@@ -17,7 +17,7 @@ export function collectDownloadImages(selectedIds: Iterable<string>, nodes: Canv
         if (node.type !== CanvasNodeType.Image) return;
         const metadata = node.metadata || {}, title = node.title || "图片";
         if (metadata.images?.length) {
-            metadata.images.forEach((image, index) => { if (image.status === "success") images.push({ nodeId: id, title, content: image.content, storageKey: image.storageKey, mimeType: image.mimeType, index: index + 1 }); });
+            metadata.images.forEach((image, index) => { if (image.status === "success") images.push({ nodeId: id, title, content: image.content, storageKey: image.storageKey, mimeType: image.mimeType, index: metadata.images!.length > 1 ? index + 1 : undefined }); });
         } else if (metadata.status !== "loading" && metadata.status !== "error" && (metadata.content || metadata.storageKey || metadata.status === "success")) images.push({ nodeId: id, title, content: metadata.content || "", storageKey: metadata.storageKey, mimeType: metadata.mimeType });
     };
     for (const id of selectedIds) visit(id);

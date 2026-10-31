@@ -21,7 +21,7 @@ function Harness({ projectId }: { projectId: string }) {
         // Simulate the native runner's project/signal guarded graph commit, even when transport ignores abort.
         if (!signal?.aborted && projectId === renderProject) setNodes((current) => current.map((node) => ({ ...node, metadata: { ...node.metadata, status: "success" } })));
     };
-    useAgentBridge({ projectId, title: "audit", nodes, connections, selectedNodeIds, viewport, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setViewport, setSelectedConnectionId: () => {}, setContextMenu: () => {} });
+    useAgentBridge({ projectId, title: "audit", getCanvasCenter: () => ({ x: (750 - viewportRef.current.x) / viewportRef.current.k, y: (500 - viewportRef.current.y) / viewportRef.current.k }), nodes, connections, selectedNodeIds, viewport, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setViewport, setSelectedConnectionId: () => {}, setContextMenu: () => {} });
     return null;
 }
 const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);

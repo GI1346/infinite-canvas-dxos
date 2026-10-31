@@ -41,7 +41,7 @@ export function useCanvasImageDownload() {
         const index = node.metadata?.images?.findIndex((image) => image.id === imageId) ?? -1;
         const image = imageId ? node.metadata?.images?.[index] : node.metadata;
         const title = node.title || "图片";
-        return download(() => readCanvasImageFiles(image ? [{ nodeId: node.id, title, content: image.content || "", storageKey: image.storageKey, mimeType: image.mimeType, ...(imageId ? { index: index + 1 } : {}) }] : []), title, true);
+        return download(() => readCanvasImageFiles(image ? [{ nodeId: node.id, title, content: image.content || "", storageKey: image.storageKey, mimeType: image.mimeType, ...(imageId && (node.metadata?.images?.length || 0) > 1 ? { index: index + 1 } : {}) }] : []), title, true);
     }, [download]);
     return { downloading, downloadImages, downloadImage };
 }

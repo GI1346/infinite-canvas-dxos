@@ -87,6 +87,13 @@ async function main() {
                 await fire(download, new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 })); await fire(download, new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })); await fire(download, new PointerEvent("pointerup", { bubbles: true, cancelable: true, button: 0 })); await fire(download, new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 })); await click(download); assert.equal(canvasPointer, 0); assert.equal(calls, 1); assert.equal(fetches.length, beforeFetch); assert.equal(saved.length, count);
             } finally { await act(async () => ownRoot.unmount()); ownHost.remove(); delete window.blinkflowDownloads; }
         });
+        await test("单张生成结果从图片按钮和节点入口下载都保留名称，不附加-1", async () => {
+            const image = { ...node("Single", "image", { status: "success", content: "blob:expired", storageKey: "image:a", images: [{ id: "only", status: "success", content: "blob:expired", storageKey: "image:a" }] }), title: "详情3.png" } as CanvasNodeData;
+            const snapshot = JSON.stringify(image), count = saved.length;
+            await act(async () => { await externalSingle(image, "only"); }); assert.equal(saved.at(-1)!.name, "详情3.png");
+            await act(async () => { await externalSingle(image); }); assert.equal(saved.at(-1)!.name, "详情3.png"); assert.equal(saved.length, count + 2);
+            assert.equal(await saved.at(-1)!.blob.text(), "original-a"); assert.equal(JSON.stringify(image), snapshot);
+        });
         await test("单张生成批次只保存所点图片，使用节点重命名、原始序号与真实MIME", async () => {
             const image = node("Batch", "image", { status: "success", content: "blob:primary", storageKey: "image:a", images: [{ id: "first", status: "success", content: "blob:primary", storageKey: "image:a" }, { id: "second", status: "success", content: "blob:expired-second", storageKey: "image:b" }] });
             const count = saved.length; await act(async () => { await externalSingle(image, "second"); });

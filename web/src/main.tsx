@@ -1,3 +1,4 @@
+import { installRuntimeDiagnostics } from "@/services/api/runtime-diagnostics";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
@@ -11,6 +12,7 @@ import { initAnalytics } from "@/lib/analytics";
 import { router } from "@/router";
 
 initAnalytics();
+installRuntimeDiagnostics();
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 

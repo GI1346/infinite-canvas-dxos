@@ -1,11 +1,14 @@
+import { recordDiagnostic } from "@/services/diagnostics";
+import { isHarnessCanvasBusy } from "@/lib/canvas/harness-canvas-busy";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { create } from "zustand";
 
 import { buildAssistantSkillPrompt } from "@/lib/canvas/canvas-assistant-skills";
+import { assistantContextMessages, DEFAULT_ASSISTANT_CONTEXT_WINDOW, normalizeAssistantContextWindow } from "@/lib/canvas/assistant-context-window";
 import { getAssistantSkill, loadAssistantSkills } from "@/stores/use-canvas-assistant-skill-store";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
-import { assistantGraphSummary, assistantRunMode, assistantRunTargets, assistantSystemPrompt, executeAssistantTool, requestAssistantAction, type AssistantAction, type AssistantToolResult } from "@/services/api/canvas-assistant";
+import { assistantPromptSourceIds, assistantRunMode, assistantRunTargets, assistantSystemPrompt, assistantWorkflowWithSources, executeAssistantTool, requestAssistantAction, type AssistantAction, type AssistantToolResult } from "@/services/api/canvas-assistant";
 import type { AiTextMessage } from "@/services/api/image";
 import { selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import type { CanvasGenerationMode, CanvasNodeData } from "@/types/canvas";
@@ -16,13 +19,14 @@ import { assistantImageParameters, explicitAssistantImageRequirements } from "@/
 export type CanvasAssistantContext = {
     snapshot: CanvasAgentSnapshot;
     getSnapshot: () => CanvasAgentSnapshot;
+    getCreationCenter?: () => { x: number; y: number };
     applyOps: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot;
     undoOps?: () => CanvasAgentSnapshot | null;
     canUndo?: boolean;
     runNode: (nodeId: string, mode?: CanvasGenerationMode, prompt?: string, signal?: AbortSignal) => Promise<CanvasNodeData | undefined>;
 };
 export type CanvasAssistantMessage = { id: string; role: "user" | "assistant" | "tool" | "error"; text: string; draft?: string; referenceLabels?: Record<string, string>; references?: string[]; models?: string[] };
-export type CanvasAssistantSession = { id: string; projectId: string; title: string; model: string; messages: CanvasAssistantMessage[]; transcript: AiTextMessage[]; references: string[]; models: string[]; turnModels?: string[]; skillId?: string; turnSkillPrompt?: string; draft: string; running: boolean; status: string; pending?: AssistantAction; updatedAt: number };
+export type CanvasAssistantSession = { id: string; projectId: string; title: string; model: string; messages: CanvasAssistantMessage[]; transcript: AiTextMessage[]; contextWindow?: number; turnHistoryLength?: number; recentPromptNodeIds?: string[]; turnPromptSourceIds?: string[]; knownNodeIds?: string[]; references: string[]; models: string[]; turnModels?: string[]; skillId?: string; turnSkillPrompt?: string; draft: string; running: boolean; status: string; pending?: AssistantAction; updatedAt: number };
 export type CanvasAssistantGenerationMode = "manual" | "auto";
 const generationModeKey = "blinkflow:canvas-assistant-generation-mode";
 export function readCanvasAssistantGenerationMode(): CanvasAssistantGenerationMode {
@@ -34,7 +38,7 @@ type CanvasAssistantStore = {
     generationMode: CanvasAssistantGenerationMode; setGenerationMode: (mode: CanvasAssistantGenerationMode) => void;
     open: boolean; context: CanvasAssistantContext | null; sessions: CanvasAssistantSession[]; currentId: string; loading: boolean; storageError: string;
     setOpen: (open: boolean) => void; setContext: (context: CanvasAssistantContext | null) => void; addReferences: (ids: string[]) => void;
-    removeReference: (id: string) => void; toggleModel: (id: string) => void; setDraft: (draft: string) => void; setModel: (model: string) => void; setSkill: (id?: string) => void;
+    removeReference: (id: string) => void; toggleModel: (id: string) => void; setDraft: (draft: string) => void; setModel: (model: string) => void; setSkill: (id?: string) => void; setContextWindow: (count: number) => void;
     setDraftSelection: (selection: AssistantDraftSelection) => void; getDraftSelection: () => AssistantDraftSelection | undefined;
 
     createSession: () => void; selectSession: (id: string) => void; renameSession: (id: string, title: string) => void; deleteSession: (id: string) => void;
@@ -51,7 +55,7 @@ let writeQueue: Promise<unknown> = Promise.resolve();
 
 function newSession(projectId: string): CanvasAssistantSession {
     const config = useConfigStore.getState().config, models = selectableModelsByCapability(config, "text");
-    return { id: nanoid(), projectId, title: "新对话", model: models.includes(config.textModel) ? config.textModel : models[0] || "", messages: [], transcript: [], references: [], models: [], draft: "", running: false, status: "", updatedAt: Date.now() };
+    return { id: nanoid(), projectId, title: "新对话", model: models.includes(config.textModel) ? config.textModel : models[0] || "", messages: [], transcript: [], contextWindow: DEFAULT_ASSISTANT_CONTEXT_WINDOW, references: [], models: [], draft: "", running: false, status: "", updatedAt: Date.now() };
 }
 function projectOf(projectId: string) {
     let project = projects.get(projectId);
@@ -74,6 +78,7 @@ function patch(projectId: string, sessionId: string, update: (session: CanvasAss
     publish(projectId); persist(projectId);
 }
 function append(projectId: string, sessionId: string, role: CanvasAssistantMessage["role"], text: string, extras: Partial<CanvasAssistantMessage> = {}) {
+    if (role === "error") recordDiagnostic("Agent", text, { projectId });
     patch(projectId, sessionId, (session) => ({ ...session, messages: [...session.messages, { id: nanoid(), role, text, ...extras }] }));
 }
 function active(): { context: CanvasAssistantContext; session: CanvasAssistantSession; projectId: string } | null {
@@ -88,7 +93,7 @@ function expandReferences(context: CanvasAssistantContext, ids: string[]) {
     ids.forEach(visit); return [...result];
 }
 function actionName(action: AssistantAction) {
-    return ({ read_canvas: "读取画布", read_assets: "查看素材", read_results: "读取运行结果", apply_workflow: "创建工作流", update_nodes: "更新节点参数", edit_canvas: "编辑画布", run_nodes: "等待确认生成", final: "完成" })[action.tool];
+    return ({ read_assets: "查看素材", read_results: "读取运行结果", apply_workflow: "创建工作流", update_nodes: "更新节点参数", edit_canvas: "编辑画布", run_nodes: "等待确认生成", final: "完成" })[action.tool];
 }
 function toolMessage(action: AssistantAction, result: AssistantToolResult): AiTextMessage {
     const text = `工具 ${action.tool} 返回：${JSON.stringify(result.value)}`;
@@ -125,7 +130,7 @@ async function runGeneration(action: AssistantAction, context: CanvasAssistantCo
 }
 async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSession, transcript: AiTextMessage[], controller: AbortController) {
     const { projectId, id } = initial, signal = controller.signal;
-    const seen = new Set<string>();
+    const seen = new Map<string, CanvasAgentSnapshot>();
     try {
         while (!signal.aborted) {
             assertProject(context, projectId, signal);
@@ -133,11 +138,12 @@ async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSes
             if (!session) return;
             const config = useConfigStore.getState().config;
             patch(projectId, id, (value) => ({ ...value, running: true, status: "思考中" }));
-            const action = await requestAssistantAction(config, session.model, [{ role: "system", content: assistantSystemPrompt(config, initial.turnModels || initial.models, useCanvasAssistantStore.getState().generationMode) + (initial.turnSkillPrompt || "") }, ...transcript], signal);
+            const proposed = await requestAssistantAction(config, session.model, [{ role: "system", content: assistantSystemPrompt(config, initial.turnModels || initial.models, useCanvasAssistantStore.getState().generationMode) + (initial.turnSkillPrompt || "") }, ...assistantContextMessages(transcript, initial.turnHistoryLength ?? transcript.length, session.contextWindow)], signal);
             assertProject(context, projectId, signal);
-            const fingerprint = JSON.stringify({ action, graph: assistantGraphSummary(context.getSnapshot()) });
-            if (seen.has(fingerprint)) throw new Error("Agent 重复同一操作且画布没有变化，已停止。请调整要求或更换对话模型后继续。");
-            seen.add(fingerprint);
+            const action = assistantWorkflowWithSources(proposed, context.getSnapshot(), session.turnPromptSourceIds || []);
+            const fingerprint = JSON.stringify(action), before = context.getSnapshot(), previous = seen.get(fingerprint);
+            if (previous && previous.nodes === before.nodes && previous.connections === before.connections && previous.viewport === before.viewport && previous.selectedNodeIds.length === before.selectedNodeIds.length && previous.selectedNodeIds.every((nodeId, index) => nodeId === before.selectedNodeIds[index])) throw new Error("Agent 重复同一操作且画布没有变化，已停止。请调整要求或更换对话模型后继续。");
+            seen.set(fingerprint, before);
             transcript = [...transcript, { role: "assistant", content: JSON.stringify(action) }];
             patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly), status: action.tool === "run_nodes" && useCanvasAssistantStore.getState().generationMode === "auto" ? "正在生成" : actionName(action) }));
             if (action.tool === "final") { append(projectId, id, "assistant", typeof action.args.message === "string" ? action.args.message : "已完成"); return; }
@@ -148,11 +154,17 @@ async function loop(context: CanvasAssistantContext, initial: CanvasAssistantSes
                 return;
             }
             let result: AssistantToolResult;
-            try { result = action.tool === "run_nodes" ? await runGeneration(action, context, projectId, signal, session.messages.findLast((item) => item.role === "user")?.draft || "") : await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal); }
-            catch (error) { if (signal.aborted) throw error; result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+            try { result = action.tool === "run_nodes" ? await runGeneration(action, context, projectId, signal, session.messages.findLast((item) => item.role === "user")?.draft || "") : await executeAssistantTool(action, context, config, initial.turnModels || initial.models, signal, session.knownNodeIds || []); }
+            catch (error) { if (signal.aborted) throw error; recordDiagnostic("Agent 工具", error, { projectId }); result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
             assertProject(context, projectId, signal);
             transcript = [...transcript, toolMessage(action, result)];
-            patch(projectId, id, (value) => ({ ...value, transcript: transcript.map(textOnly) }));
+            const resolved = action.tool === "apply_workflow" ? (result.value as { resolvedNodes?: Array<{ id: string }> })?.resolvedNodes : undefined;
+            const createdTextIds = Array.isArray(resolved) ? resolved.map((item) => item.id).filter((nodeId) => context.getSnapshot().nodes.some((node) => node.id === nodeId && node.type === "text")) : [];
+            const beforeIds = new Set(before.nodes.map((node) => node.id));
+            const createdIds = context.getSnapshot().nodes.filter((node) => !beforeIds.has(node.id)).map((node) => node.id);
+            const readIds = action.tool === "read_assets" || action.tool === "read_results" ? ((result.value as { nodes?: Array<{ id: string }> })?.nodes || []).map((node) => node.id) : [];
+            const outputIds = action.tool === "run_nodes" ? ((result.value as { outcomes?: Array<{ id: string }> })?.outcomes || []).map((node) => node.id) : [];
+            patch(projectId, id, (value) => ({ ...value, knownNodeIds: [...new Set([...(value.knownNodeIds || []), ...createdIds, ...readIds, ...outputIds])], transcript: transcript.map(textOnly), ...(createdTextIds.length ? { recentPromptNodeIds: createdTextIds, turnPromptSourceIds: createdTextIds.length === 1 ? createdTextIds : [] } : {}) }));
             append(projectId, id, "tool", `${action.tool === "run_nodes" ? "生成结果" : actionName(action)}：${JSON.stringify(result.value)}`);
         }
     } catch (error) {
@@ -209,6 +221,7 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
     getDraftSelection: (): AssistantDraftSelection | undefined => { const value = active(); return value ? draftSelections.get(value.session.id) : undefined; },
     setModel: (model) => { const value = active(); if (value) patch(value.projectId, value.session.id, (session) => ({ ...session, model })); },
     setSkill: (skillId) => { const value = active(); if (value && !get().loading && !value.session.running && !value.session.pending) patch(value.projectId, value.session.id, (session) => ({ ...session, skillId })); },
+    setContextWindow: (count) => { const value = active(); if (value && !get().loading && !value.session.running && !value.session.pending) patch(value.projectId, value.session.id, (session) => ({ ...session, contextWindow: normalizeAssistantContextWindow(count) })); },
     createSession: () => { const context = get().context; if (!context) return; const projectId = context.snapshot.projectId, project = projectOf(projectId), session = newSession(projectId); project.sessions = [session, ...project.sessions]; project.currentId = session.id; publish(projectId); persist(projectId); },
     selectSession: (id) => { const value = active(); if (!value || !projectOf(value.projectId).sessions.some((session) => session.id === id)) return; projectOf(value.projectId).currentId = id; publish(value.projectId); persist(value.projectId); },
     renameSession: (id, title) => { const value = active(); if (value && title.trim()) patch(value.projectId, id, (session) => ({ ...session, title: title.trim() })); },
@@ -216,6 +229,7 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
     send: async () => {
         const value = active(); if (!value || get().loading || value.session.running || value.session.pending) return;
         const { session, projectId, context } = value;
+        if (isHarnessCanvasBusy(projectId)) { append(projectId, session.id, "error", "DeepSeek Harness 正在操作当前画布，请等待完成后再发送。输入内容已保留。"); return; }
         if (!session.draft.trim() && !session.references.length) return;
         const controller = new AbortController(); controllers.set(session.id, controller);
         // Lock this turn before asynchronous Skill loading, so double-clicks cannot submit twice.
@@ -233,15 +247,22 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
             const referenceLabels = Object.fromEntries(references.map((id) => [id, labels.get(id) || nodes.find((node) => node.id === id)?.title || "已移除节点"]));
             const displayText = assistantDisplayDraft(draft, (id) => referenceLabels[id]);
             const text = assistantReadableDraft(draft, (id) => nodes.find((node) => node.id === id)?.title || id).trim() || "请分析这些节点";
-            const user: AiTextMessage = { role: "user", content: `${text}\n本次引用节点ID：${JSON.stringify(references)}\n本次指定生成模型ID：${JSON.stringify(models)}\n当前画布：${JSON.stringify(assistantGraphSummary(context.getSnapshot()))}` };
+            const turnPromptSourceIds = assistantPromptSourceIds(context.getSnapshot(), references, text, session.recentPromptNodeIds);
+            const knownNodeIds = [...new Set([...(session.knownNodeIds || []), ...session.messages.flatMap((item) => item.references || []), ...references, ...turnPromptSourceIds])];
+            const user: AiTextMessage = { role: "user", content: `${text}\n本次引用节点ID：${JSON.stringify(references)}\n本次指定生成模型ID：${JSON.stringify(models)}\n本次提示词源节点ID：${JSON.stringify(turnPromptSourceIds)}` };
+            const turnHistoryLength = session.transcript.length;
             let transcript = [...session.transcript, user];
             draftSelections.delete(session.id);
-            patch(projectId, session.id, (item) => ({ ...item, running: true, draft: "", references: [], models: [], turnModels: models, turnSkillPrompt, title: item.messages.length ? item.title : displayText.trim().split("\n")[0], transcript, pending: undefined, messages: [...item.messages, { id: nanoid(), role: "user", text: displayText, draft, referenceLabels, references, models }] }));
-            if (references.length) {
-                try { const result = await executeAssistantTool({ tool: "read_assets", args: { nodeIds: references } }, context, useConfigStore.getState().config, models, controller.signal); transcript = [...transcript, toolMessage({ tool: "read_assets", args: {} }, result)]; }
+            patch(projectId, session.id, (item) => ({ ...item, running: true, draft: "", references: [], models: [], knownNodeIds, turnModels: models, turnSkillPrompt, turnHistoryLength, turnPromptSourceIds, title: item.messages.length ? item.title : displayText.trim().split("\n")[0], transcript, pending: undefined, messages: [...item.messages, { id: nanoid(), role: "user", text: displayText, draft, referenceLabels, references, models }] }));
+            const inputNodeIds = [...new Set([...references, ...turnPromptSourceIds])];
+            if (inputNodeIds.length) {
+                try { const result = await executeAssistantTool({ tool: "read_assets", args: { nodeIds: inputNodeIds } }, context, useConfigStore.getState().config, models, controller.signal, knownNodeIds);
+                    const readIds = ((result.value as { nodes?: Array<{ id: string }> })?.nodes || []).map((node) => node.id);
+                    patch(projectId, session.id, (item) => ({ ...item, knownNodeIds: [...new Set([...(item.knownNodeIds || []), ...readIds])] }));
+                    transcript = [...transcript, toolMessage({ tool: "read_assets", args: {} }, result)]; }
                 catch (error) { if (!controller.signal.aborted) append(projectId, session.id, "error", `读取引用失败：${error instanceof Error ? error.message : String(error)}`); }
             }
-            await loop(context, { ...session, models, turnModels: models, turnSkillPrompt }, transcript, controller);
+            await loop(context, { ...session, knownNodeIds, models, turnModels: models, turnSkillPrompt, turnHistoryLength, turnPromptSourceIds }, transcript, controller);
         } catch (error) {
             if (!controller.signal.aborted) append(projectId, session.id, "error", error instanceof Error ? error.message : String(error));
         } finally {
@@ -258,9 +279,11 @@ export const useCanvasAssistantStore = create<CanvasAssistantStore>((set, get) =
         else {
             try {
                 result = await runGeneration(action, context, projectId, controller.signal, session.messages.findLast((item) => item.role === "user")?.draft || "");
-            } catch (error) { result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+            } catch (error) { if (!controller.signal.aborted) recordDiagnostic("Agent 生成", error, { projectId }); result = { value: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
         }
         if (controller.signal.aborted) return;
+        const outcomes = (result.value as { outcomes?: Array<{ id: string }> })?.outcomes || [];
+        patch(projectId, session.id, (item) => ({ ...item, knownNodeIds: [...new Set([...(item.knownNodeIds || []), ...outcomes.map((outcome) => outcome.id)])] }));
         append(projectId, session.id, "tool", `${accepted ? "生成结果" : "取消生成"}：${JSON.stringify(result.value)}`);
         await loop(context, session, [...session.transcript, toolMessage(action, result)], controller);
     },

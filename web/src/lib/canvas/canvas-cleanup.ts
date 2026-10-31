@@ -1,7 +1,7 @@
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
 
-export type CleanupOptions = { images: boolean; history: boolean; logs: boolean; assets: boolean; allProjects: boolean };
+export type CleanupOptions = { images: boolean; history: boolean; logs: boolean; diagnostics?: boolean; assets: boolean; allProjects: boolean };
 
 // Explicit fields only: never traverse or rewrite model, provider or plugin configuration.
 export function cleanProject(project: CanvasProject, options: CleanupOptions): CanvasProject {

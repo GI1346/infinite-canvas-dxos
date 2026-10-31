@@ -5,8 +5,9 @@ import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
+import { canvasTitleWithoutExtension } from "@/lib/canvas/canvas-download-name";
 import { pickImageSource } from "@/lib/image-thumbnail";
-import { previewUrlFor, subscribeImagePreviews, getImagePreviewRevision } from "@/services/image-storage";
+import { previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -131,7 +132,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected) : null), [pluginHost, data, theme, scale, isSelected]);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
-    const [titleDraft, setTitleDraft] = useState(data.title || "");
+    const isImage = data.type === CanvasNodeType.Image;
+    const titleName = isImage ? canvasTitleWithoutExtension(data.title || "") : data.title || "";
+    const [titleDraft, setTitleDraft] = useState(titleName);
     const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
@@ -163,8 +166,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     });
 
     useEffect(() => {
-        setTitleDraft(data.title || "");
-    }, [data.title]);
+        setTitleDraft(titleName);
+    }, [titleName]);
 
     useEffect(() => {
         if (!isEditingTitle) return;
@@ -173,11 +176,13 @@ export const CanvasNode = React.memo(function CanvasNode({
     }, [isEditingTitle]);
 
     const finishTitleEditing = useCallback(() => {
-        const title = titleDraft.trim() || data.title || t("canvas.node.untitled");
-        setTitleDraft(title);
+        const draft = titleDraft.trim();
+        const name = (isImage && draft !== titleName ? canvasTitleWithoutExtension(draft).trim() : draft) || titleName || t("canvas.node.untitled");
+        const title = name + (isImage ? (data.title || "").slice(titleName.length) : "");
+        setTitleDraft(name);
         setIsEditingTitle(false);
         if (title !== data.title) onTitleChange(data.id, title);
-    }, [data.id, data.title, onTitleChange, t, titleDraft]);
+    }, [data.id, data.title, isImage, onTitleChange, t, titleDraft, titleName]);
 
     useEffect(() => {
         if (!isEditingTitle) return;
@@ -328,7 +333,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 else onContextMenu(event, data.id);
             }}
         >
-            <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => {
+            <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" data-node-title={data.id} style={isImage ? { top: -44, width: Math.max(0, data.width - 24), maxWidth: "none", overflow: "hidden" } : undefined} onMouseDown={(event) => {
                 if (referenceSelectionState) {
                     event.stopPropagation();
                     if (event.button === 0 && referenceSelectionState === "available") onSelectReference?.(data.id);
@@ -341,14 +346,14 @@ export const CanvasNode = React.memo(function CanvasNode({
                         value={titleDraft}
                         aria-label="节点名称"
                         maxLength={64}
-                        className="h-6 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
-                        style={{ borderColor: theme.node.muted, color: theme.node.text }}
+                        className={`h-6 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left ${isImage ? "text-base" : "text-xs"} font-medium outline-none`}
+                        style={{ borderColor: theme.node.muted, color: theme.node.text, ...(isImage ? { fontSize: 32, height: 40 } : {}) }}
                         onChange={(event) => setTitleDraft(event.target.value)}
                         onBlur={finishTitleEditing}
                         onKeyDown={(event) => {
                             if (event.key === "Enter") finishTitleEditing();
                             if (event.key === "Escape") {
-                                setTitleDraft(data.title || "");
+                                setTitleDraft(titleName);
                                 setIsEditingTitle(false);
                             }
                         }}
@@ -356,15 +361,15 @@ export const CanvasNode = React.memo(function CanvasNode({
                 ) : (
                     <button
                         type="button"
-                        className="block max-w-full truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-75 transition hover:border-current hover:opacity-100"
-                        style={{ color: theme.node.text }}
+                        className={`block max-w-full truncate border-b border-dashed border-transparent px-0 text-left ${isImage ? "py-0 text-base leading-6" : "py-0.5 text-xs"} font-medium opacity-75 transition hover:border-current hover:opacity-100`}
+                        style={{ color: theme.node.text, ...(isImage ? { fontSize: 32, lineHeight: "40px", width: "100%", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" } : {}) }}
                         title={t("canvas.node.renameHint")}
                         onDoubleClick={(event) => {
                             event.stopPropagation();
                             if (!referenceSelectionState) setIsEditingTitle(true);
                         }}
                     >
-                        {data.title || t("canvas.node.untitled")}
+                        {titleName || t("canvas.node.untitled")}
                     </button>
                 )}
             </div>
@@ -751,6 +756,20 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
     );
 }
 
+// Keep the current pixels until the requested preview/original is decoded; stale requests never win.
+function DecodedCanvasImage({ src, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) {
+    const [ready, setReady] = useState(src);
+    useEffect(() => {
+        if (!src || src === ready) return;
+        let active = true;
+        const image = new Image();
+        image.src = src;
+        image.decode().then(() => { if (active) setReady(src); }).catch(() => undefined);
+        return () => { active = false; };
+    }, [src, ready]);
+    return <img {...props} src={ready} decoding="async" />;
+}
+
 function ImageContent({
     node,
     batchExpanded,
@@ -776,14 +795,14 @@ function ImageContent({
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
-    useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const images = node.metadata?.images || [];
     const batchCount = images.length;
     const isBatchRoot = batchCount > 1;
     const primaryImageId = node.metadata?.primaryImageId || images[0]?.id;
     const primaryImage = images.find((image) => image.id === primaryImageId);
     const primaryContent = primaryImage?.content || node.metadata?.content;
-    const primaryPreviewUrl = previewUrlFor(primaryImage?.storageKey || node.metadata?.storageKey);
+    const primaryKey = primaryImage?.storageKey || node.metadata?.storageKey;
+    const primaryPreviewUrl = useSyncExternalStore(subscribeImagePreviews, () => previewUrlFor(primaryKey));
     const primarySource = primaryContent
         ? pickImageSource({
               previewUrl: primaryPreviewUrl,
@@ -805,7 +824,8 @@ function ImageContent({
                 : null}
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 {primaryContent ? (
-                    <img
+                    <DecodedCanvasImage
+                        key={primaryContent}
                         src={primarySource}
                         alt={node.title}
                         draggable={false}
@@ -847,7 +867,6 @@ function ImageContent({
 function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, onDuplicate, onDownload, onRetry, onDelete }: { node: CanvasNodeData; image: CanvasNodeImage; index: number; scale: number; onView: () => void; onSetPrimary: () => void; onDuplicate: () => void; onDownload: () => void; onRetry: () => void; onDelete: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
-    useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const count = node.metadata?.images?.length || 0;
     const columns = Math.min(count, 4);
     const rows = Math.ceil(count / columns);
@@ -857,9 +876,10 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
     const row = Math.floor(slot / columns);
     const x = column * (node.width + 18);
     const y = (row - rows + 1) * (node.height + 18);
+    const previewUrl = useSyncExternalStore(subscribeImagePreviews, () => previewUrlFor(image.storageKey));
     const source = image.content
         ? pickImageSource({
-              previewUrl: previewUrlFor(image.storageKey),
+              previewUrl,
               originalUrl: image.content,
               naturalWidth: image.naturalWidth,
               naturalHeight: image.naturalHeight,
@@ -894,7 +914,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
                 onView();
             }}
         >
-            {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} />}
+            {image.content ? <DecodedCanvasImage key={image.content} src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} />}
             {image.content ? (
                 <div className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100">
                     <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownload())}>

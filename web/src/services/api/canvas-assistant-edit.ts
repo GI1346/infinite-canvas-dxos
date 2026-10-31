@@ -105,5 +105,6 @@ export async function editAssistantCanvas(args: Record<string, unknown>, context
     for (const op of ops) if ((op.type === "add_node" || op.type === "connect_nodes") && !op.id) op.id = nanoid();
     const expected = applyCanvasAgentOps(context.getSnapshot(), ops), after = context.applyOps(ops);
     if (JSON.stringify(after) !== JSON.stringify(expected)) throw new Error("画布操作回读不一致，请检查当前画布");
-    return { applied: ops.length, nodeIds: after.nodes.map((node) => node.id), selectedNodeIds: after.selectedNodeIds, note: "操作已落地，可撤销；生成仍须调用 run_nodes，沿用手动 / 自动模式。" };
+    const changedIds = after.nodes.filter((node) => { const previous = before.nodes.find((item) => item.id === node.id); return !previous || JSON.stringify(previous) !== JSON.stringify(node); }).map((node) => node.id);
+    return { applied: ops.length, nodeIds: changedIds, selectedNodeIds: after.selectedNodeIds.filter((id) => changedIds.includes(id) || (Array.isArray(args.nodeIds) && args.nodeIds.includes(id))), note: "操作已落地，可撤销；生成仍须调用 run_nodes，沿用手动 / 自动模式。" };
 }

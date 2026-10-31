@@ -22,3 +22,8 @@ desktop/BlinkFlowData/
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
 web/public/plugins
+
+# Official Harness generated runtime (recreated from its locked manifest)
+desktop/harness-runtime/node/
+desktop/harness-runtime/runtime/node_modules/
+desktop/harness-runtime/.cache/

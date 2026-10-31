@@ -2,6 +2,8 @@ const { app, BrowserWindow, dialog, shell, ipcMain, session } = require('electro
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
+const { startHarness } = require('./harness-host.cjs');
 const { prepareStorage, writeJson, resetFile } = require('./storage.cjs');
 const { snapshotApi, restoreApi } = require('./storage-renderer.cjs');
 const legacy = path.join(app.getPath('appData'), 'Infinite Canvas DXOS');
@@ -21,7 +23,20 @@ try {
 }
 const root = path.join(__dirname, 'web');
 const mime = { '.html': 'text/html; charset=utf-8', '.webmanifest': 'application/manifest+json', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
-let server;
+let server, harness, harnessWindow, harnessOpening, harnessBridge, harnessProjectId, quitting = false;
+const harnessRequests = new Map();
+let harnessModels = null;
+// The bridge receives labels and IDs only; credentials stay in the main canvas renderer.
+function cleanHarnessModels(state) {
+  if (!state || typeof state.projectId !== 'string' || !state.projectId || typeof state.selectedImageModel !== 'string' || !Array.isArray(state.channels)) throw new Error('无效的画布模型目录');
+  return { projectId: state.projectId, selectedImageModel: state.selectedImageModel, channels: state.channels.map(channel => {
+    if (!channel || typeof channel.id !== 'string' || typeof channel.name !== 'string' || !Array.isArray(channel.models)) throw new Error('无效的生图中转站');
+    return { id: channel.id, name: channel.name, models: channel.models.map(model => {
+      if (!model || typeof model.id !== 'string' || typeof model.name !== 'string' || model.id !== channel.id + '::' + model.name) throw new Error('无效的生图模型');
+      return { id: model.id, name: model.name };
+    }) };
+  }) };
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   try {
@@ -57,6 +72,113 @@ else {
     const trusted = (event) => {
       if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('无效的存储操作来源');
     };
+    const currentHarnessModels = () => harnessModels?.projectId === harnessProjectId ? harnessModels : null;
+    const publishHarnessModels = () => { if (harnessWindow && !harnessWindow.isDestroyed()) harnessWindow.webContents.send('harness:models-changed', currentHarnessModels()); };
+    const trustedHarness = (event) => {
+      if (!harness || !harnessWindow || harnessWindow.isDestroyed() || event.sender !== harnessWindow.webContents || event.senderFrame !== harnessWindow.webContents.mainFrame || new URL(event.senderFrame.url).origin !== new URL(harness.url).origin) throw new Error('无效的 Harness 模型操作来源');
+    };
+    ipcMain.on('harness:models', (event, state) => {
+      try { trusted(event); harnessModels = state === null ? null : cleanHarnessModels(state); publishHarnessModels(); }
+      catch { /* Reject an invalid or unrelated renderer without exposing configuration. */ }
+    });
+    ipcMain.handle('harness:models-get', (event) => { trustedHarness(event); return currentHarnessModels(); });
+    ipcMain.handle('harness:model-select', (event, imageModel) => {
+      trustedHarness(event);
+      const state = currentHarnessModels();
+      if (!state) throw new Error('画布已切换，请从当前画布重新打开 Harness');
+      if (typeof imageModel !== 'string' || (imageModel && !state.channels.some(channel => channel.models.some(model => model.id === imageModel)))) throw new Error('生图模型已移除，请重新选择');
+      harnessModels = { ...state, selectedImageModel: imageModel };
+      win.webContents.send('harness:image-model', { projectId: state.projectId, imageModel });
+      publishHarnessModels();
+    });
+    const cancelHarnessRequests = (message) => {
+      for (const [id, pending] of harnessRequests) {
+        if (!win.isDestroyed()) win.webContents.send('harness:cancel', id);
+        pending.finish({ error: message });
+      }
+    };
+    const ensureHarnessBridge = async () => {
+      if (harnessBridge) return harnessBridge;
+      const token = crypto.randomBytes(32).toString('hex');
+      const bridge = http.createServer((req, res) => {
+        if (req.method !== 'POST' || req.url !== '/tool' || req.headers.authorization !== 'Bearer ' + token || req.headers.origin) { res.writeHead(403); return res.end(); }
+        let body = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('error', () => { if (!res.writableEnded) res.destroy(); });
+        req.on('end', () => {
+          let request;
+          try {
+            request = JSON.parse(body);
+            if (!request || typeof request.tool !== 'string' || !request.args || typeof request.args !== 'object' || Array.isArray(request.args)) throw new Error('无效的画布工具请求');
+            if (win.isDestroyed() || new URL(win.webContents.getURL()).origin !== origin) throw new Error('请先打开 BlinkFlow 画布');
+          } catch (error) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: error.message })); }
+          const id = crypto.randomUUID();
+          const finish = (value) => {
+            harnessRequests.delete(id);
+            if (!res.destroyed && !res.writableEnded) { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify(value)); }
+          };
+          harnessRequests.set(id, { finish });
+          res.once('close', () => { if (harnessRequests.delete(id) && !win.isDestroyed()) win.webContents.send('harness:cancel', id); });
+          win.webContents.send('harness:tool', { id, projectId: harnessProjectId, imageModel: currentHarnessModels()?.selectedImageModel || '', tool: request.tool, args: request.args });
+        });
+      });
+      await new Promise((resolve, reject) => { bridge.once('error', reject); bridge.listen(0, '127.0.0.1', resolve); });
+      harnessBridge = { server: bridge, token, url: 'http://127.0.0.1:' + bridge.address().port };
+      return harnessBridge;
+    };
+    const openHarnessExternal = async (url) => {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || !(parsed.hostname === 'deepseek.com' || parsed.hostname.endsWith('.deepseek.com') || parsed.hostname === 'github.com' || parsed.hostname === 'deepseek-harness.github.io')) throw new Error('未打开非官方 Harness 外部地址');
+      await shell.openExternal(parsed.href);
+    };
+    ipcMain.handle('harness:open', async (event, options) => {
+      trusted(event);
+      if (!options || typeof options.projectId !== 'string' || !options.projectId) throw new Error('请先打开画布');
+      const models = cleanHarnessModels(options.models);
+      if (models.projectId !== options.projectId) throw new Error('画布模型目录与当前画布不匹配');
+      while (harnessOpening) {
+        await harnessOpening.catch(() => {});
+        trusted(event);
+        if (harnessModels?.projectId !== options.projectId) throw new Error('画布已切换，请从当前画布重新打开 Harness');
+      }
+      harnessModels = models;
+      harnessOpening = (async () => {
+        if (harness && harnessProjectId !== options.projectId) {
+          cancelHarnessRequests('画布已切换，旧画布工具已停止');
+          if (harnessWindow && !harnessWindow.isDestroyed()) harnessWindow.destroy();
+          await harness.stop(); harness = null;
+        }
+        harnessProjectId = options.projectId;
+        if (!harness) {
+          const bridge = await ensureHarnessBridge();
+          harness = await startHarness({ runtimeDirectory: app.isPackaged ? path.join(process.resourcesPath, 'harness-runtime') : path.join(__dirname, 'harness-runtime'), dataDirectory: path.join(dataDirectory, 'Harness'), bridgeUrl: bridge.url, bridgeToken: bridge.token, openExternal: openHarnessExternal });
+        }
+        if (!harnessWindow || harnessWindow.isDestroyed()) {
+          harnessWindow = new BrowserWindow({ parent: win, width: 1100, height: 850, minWidth: 620, minHeight: 520, show: false, title: 'DeepSeek Harness · BlinkFlow', icon: path.join(__dirname, 'assets', 'blinkflow.ico'), webPreferences: { preload: path.join(__dirname, 'harness-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, partition: 'persist:blinkflow-harness' } });
+          const harnessOrigin = new URL(harness.url).origin;
+          harnessWindow.webContents.setWindowOpenHandler(({ url }) => { if (url === 'about:blank') return { action: 'deny' }; void openHarnessExternal(url).catch((error) => dialog.showErrorBox('无法打开登录页面', error.message)); return { action: 'deny' }; });
+          harnessWindow.webContents.on('will-navigate', (navigation, url) => { if (new URL(url).origin !== harnessOrigin) { navigation.preventDefault(); void openHarnessExternal(url).catch((error) => dialog.showErrorBox('无法打开外部页面', error.message)); } });
+          harnessWindow.on('close', (close) => { if (!quitting) { close.preventDefault(); harnessWindow.hide(); } });
+          harnessWindow.setMenuBarVisibility(false);
+          try { await harnessWindow.loadURL(harness.url); }
+          catch (error) { harnessWindow.destroy(); harnessWindow = null; throw error; }
+        }
+        publishHarnessModels();
+        if (harnessWindow.isMinimized()) harnessWindow.restore();
+        harnessWindow.show(); harnessWindow.focus();
+        return { url: new URL(harness.url).origin };
+      })();
+      try { return await harnessOpening; }
+      finally { harnessOpening = null; }
+    });
+    ipcMain.on('harness:response', (event, id, result) => {
+      try { trusted(event); } catch { return; }
+      if (typeof id !== 'string' || !result || typeof result !== 'object') return;
+      harnessRequests.get(id)?.finish(result);
+    });
+    win.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) cancelHarnessRequests('画布页面已切换，工具请求已停止'); });
+    win.on('closed', () => { cancelHarnessRequests('画布已关闭'); app.quit(); });
     ipcMain.handle('downloads:images', async (event, files) => {
       trusted(event);
       if (!Array.isArray(files) || files.some((file) => !file || typeof file.name !== 'string' || path.basename(file.name) !== file.name || /[<>:"/\\|?*\x00-\x1f]/.test(file.name) || !(file.data instanceof ArrayBuffer))) throw new Error('无效的图片下载数据');
@@ -119,5 +241,5 @@ else {
     win.show();
   }).catch((error) => { dialog.showErrorBox('启动失败', String(error.message || error)); app.quit(); });
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => server?.close());
+  app.on('before-quit', () => { quitting = true; harness?.stop(); harnessBridge?.server.close(); server?.close(); });
 }

@@ -5,30 +5,44 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 export const LLM_TYPE = "dxos:llm";
 export type LlmInputGroup = { id: string; label: string; sourceName: string; sourceNodeId: string; references: string[]; mediaNodeIds: string[] };
-export type LlmInputs = { references: string[]; text: string; imageNodeIds: string[]; groups: LlmInputGroup[] };
+export type LlmInputPreview = { id: string; type: "image" | "text"; title: string; content: string; storageKey?: string };
+export type LlmInputs = { references: string[]; text: string; imageNodeIds: string[]; groups: LlmInputGroup[]; previews?: LlmInputPreview[] };
 
-export function collectLlmInputs(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]): LlmInputs {
-    const groups: LlmInputGroup[] = [], texts = new Set<string>(), mediaIds = new Set<string>(), sourceIds = new Set<string>();
+export function collectLlmInputs(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[], withPreviews = false): LlmInputs {
+    const groups: LlmInputGroup[] = [], previews: LlmInputPreview[] = [], texts = new Set<string>(), mediaIds = new Set<string>(), sourceIds = new Set<string>(), previewIds = new Set<string>();
     for (const edge of connections.filter((connection) => connection.toNodeId === node.id)) {
         const source = nodes.find((candidate) => candidate.id === edge.fromNodeId);
         if (!source || sourceIds.has(source.id)) continue;
         sourceIds.add(source.id);
-        const checkMedia = (candidate: CanvasNodeData, visited = new Set<string>()) => {
+        const acceptsText = !node.metadata?.tableInputChannels?.find((channel) => channel.id === (edge.toPort || "input-1"))?.imagesOnly;
+        const visitSource = (candidate: CanvasNodeData, visited = new Set<string>()) => {
             if (visited.has(candidate.id)) return;
             visited.add(candidate.id);
             if (candidate.type === "audio" || candidate.type === "video") throw new Error("LLM 多模态分析当前只接收图片和文本，不支持音频或视频输入；请移除对应连线");
-            if (candidate.type === "group") nodes.filter((child) => child.metadata?.groupId === candidate.id).forEach((child) => checkMedia(child, visited));
+            if (candidate.type === "group") nodes.filter((child) => child.metadata?.groupId === candidate.id).forEach((child) => visitSource(child, visited));
+            if (candidate.type === "text" && acceptsText) {
+                const meta = candidate.metadata, primaryId = meta?.primaryTextId || meta?.texts?.[0]?.id;
+                const primary = meta?.texts?.find((item) => item.id === primaryId);
+                const text = primary ? primary.content : meta?.content || meta?.prompt || "";
+                if (text.trim()) texts.add(text.trim());
+                if (withPreviews && !previewIds.has(candidate.id)) {
+                    previewIds.add(candidate.id);
+                    previews.push({ id: candidate.id, type: "text", title: candidate.title || "文本", content: text });
+                }
+            }
         };
-        checkMedia(source);
+        visitSource(source);
         const items = channelItems(node, edge.toPort || "input-1", nodes, [edge]);
-        items.filter((item) => item.type === "text").forEach((item) => { if (item.text.trim()) texts.add(item.text.trim()); });
         const images = items.filter((item): item is Extract<DxInputItem, { type: "media" }> => item.type === "media" && item.mediaType === "image" && !mediaIds.has(item.nodeId));
         if (!images.length) continue;
-        images.forEach((image) => mediaIds.add(image.nodeId));
+        images.forEach((image) => {
+            mediaIds.add(image.nodeId);
+            if (withPreviews) previews.push({ id: image.nodeId, type: "image", title: image.title || "图片", content: image.url, storageKey: image.storageKey });
+        });
         groups.push({ id: "input-" + (groups.length + 1), label: String.fromCharCode(65 + groups.length), sourceName: source.title || (source.type === "group" ? "图片组" : "图片"), sourceNodeId: source.id, references: images.map((image) => image.url), mediaNodeIds: images.map((image) => image.nodeId) });
     }
     return {
-        references: groups.flatMap((group) => group.references), text: [...texts].join("\n\n"), groups,
+        references: groups.flatMap((group) => group.references), text: [...texts].join("\n\n"), groups, ...(withPreviews ? { previews } : {}),
         imageNodeIds: nodes.filter((source) => source.type === "image" && (mediaIds.has(source.id) || source.metadata?.images?.some((image) => mediaIds.has(source.id + ":" + image.id)))).map((source) => source.id),
     };
 }

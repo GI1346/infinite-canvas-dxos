@@ -70,6 +70,15 @@ await check("single visible image and storage-only content are eligible; loading
     const values = [node("single", "visible", { content: "blob:visible" }), node("stored", "stored", { storageKey: "image:stored" }), node("pending", "pending", { content: "blob:preview", status: "loading", images: [image("pending", "loading")] }), node("failed", "failed", { content: "blob:preview", status: "error", images: [image("failed", "error")] }), node("empty"), group("empty-group")];
     assert.deepEqual(collectDownloadImages(values.map((value) => value.id), values).map((item) => item.nodeId), ["single", "stored"]);
 });
+await check("one generated image keeps the renamed filename in both single-node and multi-node ZIP exports", async () => {
+    disk.set("image:single", png); disk.set("image:other", jpeg);
+    const values = [node("one", "详情3.png", { content: "blob:expired", storageKey: "image:single", images: [image("only", "success", "blob:expired", "image:single")] }), node("two", "详情4", { images: [image("other", "success", "", "image:other")] })];
+    const snapshot = JSON.stringify(values), found = collectDownloadImages(["one", "two"], values);
+    assert.deepEqual(found.map(item => item.index), [undefined, undefined]);
+    const single = await createCanvasImageZip(["one"], values); assert.deepEqual(Object.keys(await entries(single.blob)), ["详情3.png"]);
+    const multi = await createCanvasImageZip(["one", "two"], values); assert.deepEqual(Object.keys(await entries(multi.blob)), ["详情3.png", "详情4.jpg"]);
+    assert.equal(JSON.stringify(values), snapshot); assert.deepEqual((await entries(single.blob))["详情3.png"], await bytes(png));
+});
 await check("ZIP bytes use full original storage blob rather than preview URL, and actual MIME wins", async () => {
     disk.set("image:original", jpeg);
     const result = await createCanvasImageZip(["stored"], [node("stored", "重命名.png", { storageKey: "image:original", content: "blob:stale-preview", mimeType: "image/png" })]);

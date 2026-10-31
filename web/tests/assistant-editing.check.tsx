@@ -47,16 +47,22 @@ async function main(){
  const oldId=state().currentId;await change(()=>state().createSession());await change(()=>state().setDraft('新会话'));await change(()=>state().addReferences(['i3']));assert.equal(current().draft,`新会话${token('i3')} `);await change(()=>state().selectSession(oldId));assert(current().draft.startsWith('开始'));
  console.log('PASS nonmodal large editor allows canvas adds, shared cursor and per-session isolation.');
  const panel=document.querySelector<HTMLElement>('[data-assistant-panel]')!;
- const old={width:parseFloat(panel.style.width),height:parseFloat(panel.style.height),x:parseFloat(panel.style.left)};
- await drag(panel.querySelector<HTMLElement>('[data-assistant-resize="w"]')!,-90,0);assert.equal(parseFloat(panel.style.width),old.width+90);assert.equal(parseFloat(panel.style.left),old.x-90);
- await drag(panel.querySelector<HTMLElement>('[data-assistant-resize="n"]')!,0,-50);assert.equal(parseFloat(panel.style.height),old.height+50);
+ const sidebar=document.querySelector<HTMLElement>('[data-canvas-assistant]')!;
+ assert.equal(sidebar.style.width,'420px');assert.equal(panel.style.position,'relative');assert.equal(panel.style.height,'100%');
+ await drag(panel.querySelector<HTMLElement>('[data-assistant-sidebar-resize]')!,-90,0);assert.equal(sidebar.style.width,'510px');
+ assert(!panel.querySelector('[data-assistant-resize="n"]'));assert(!panel.querySelector('[data-assistant-resize="e"]'));
+ await drag(panel.querySelector<HTMLElement>('[data-assistant-header]')!,80,50);assert.equal(sidebar.style.width,'510px');
  await drag(label('调整 Agent 输入区高度'),0,-110);assert.equal(label('Agent 消息').style.height,'190px');
- const saved=JSON.parse(localStorage.getItem('blinkflow:canvas-assistant-layout')!);assert.equal(saved.width,old.width+90);assert.equal(saved.inputHeight,190);
+ const saved=JSON.parse(localStorage.getItem('blinkflow:canvas-assistant-layout')!);assert.equal(saved.inputHeight,190);assert.equal(localStorage.getItem('blinkflow:canvas-assistant-sidebar-width'),'510');
+ const history=label('Agent 历史回读条数') as HTMLSelectElement;assert.deepEqual([...history.options].map(o=>Number(o.value)),[3,5,10,20,50,100,150,200]);assert.equal(history.value,'20');
+ await change(()=>state().setContextWindow(200));assert.equal(history.value,'200');
+ await click(label('收起 Agent'));assert.equal(sidebar.style.width,'0px');assert(document.querySelector('[data-assistant-orb]'));
+ await click(label('打开 Agent'));assert.equal(sidebar.style.width,'510px');assert.equal(history.value,'200');
  await click(label('全屏编辑 Agent 输入'));const enlarged=document.querySelector<HTMLElement>('[data-assistant-editor]')!;const before=parseFloat(enlarged.style.width);await drag(enlarged.querySelector<HTMLElement>('[data-assistant-resize="e"]')!,100,0);assert.equal(parseFloat(enlarged.style.width),before+100);
  await drag(enlarged.querySelector('header')!,60,30);assert.equal(parseFloat(enlarged.style.left),100);assert.equal(parseFloat(enlarged.style.top),100);
  await click(label('关闭 Agent 大窗口编辑'));await click(label('全屏编辑 Agent 输入'));assert.equal(parseFloat(document.querySelector<HTMLElement>('[data-assistant-editor]')!.style.width),before+100);await click(label('关闭 Agent 大窗口编辑'));
  for(const direction of ['n','s','e','w','ne','nw','se','sw'] as const)for(const [dx,dy]of [[5000,5000],[-5000,-5000]]){const r=resizeAssistantWindow({x:400,y:300,width:500,height:500},dx,dy,direction,{width:1600,height:1000});assert(r.x>=8&&r.y>=8&&r.x+r.width<=1592&&r.y+r.height<=992);}
- console.log('PASS both windows resize/move, input height independent, saved geometry and viewport clamps.');
+ console.log('PASS right sidebar defaults 420, left resize persists, header stationary, collapse/orb, history selector, independent input/large editor.');
  const draft=`首行 ${token('i2')} 中间\n\n第二行 ${token('i1')} 末尾 ${token('i2')} `;
  await change(()=>state().setDraft(draft));await act(async()=>{await state().send();await tick()});
  const message=current().messages.find(m=>m.role==='user')!;

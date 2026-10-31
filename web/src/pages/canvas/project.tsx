@@ -38,6 +38,7 @@ import { CanvasExtractSelectionDialog } from "@/components/canvas/canvas-extract
 import { extractImageSelection, imageOutputCropContext } from "@/lib/canvas/canvas-local-fusion";
 import { fusionConnectionPort } from "@/lib/canvas/canvas-fusion-ports";
 import { isLocalFusionRunning } from "@/lib/canvas/canvas-local-fusion-run";
+import { CanvasImageEditor } from "@/components/canvas/canvas-image-editor";
 import { CanvasNodePaintDialog } from "@/components/canvas/canvas-node-paint-dialog";
 import { CanvasImagePreviewDialog } from "@/components/canvas/canvas-image-preview-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
@@ -92,6 +93,7 @@ import { canvasDownloadMimeType, canvasDownloadName } from "@/lib/canvas/canvas-
 import { useCanvasImageDownload } from "@/hooks/use-canvas-image-download";
 import { CanvasRelayTasksModal } from "@/components/canvas/canvas-relay-tasks-modal";
 import { InputNumber } from "antd";
+import { recordDiagnostic } from "@/services/diagnostics";
 import { CanvasCleanupModal } from "@/components/canvas/canvas-cleanup-modal";
 import { runningTableBatches } from "@/lib/canvas/dxos-table";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
@@ -118,7 +120,10 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 // Register built-in nodes in the shared registry once when the module loads.
 registerBuiltinNodes();
 
+const CANVAS_IMAGE_CLIPBOARD_TYPE = "application/x-blinkflow-canvas-images";
+
 type CanvasClipboard = {
+    token: string;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
 };
@@ -290,6 +295,8 @@ function InfiniteCanvasPage() {
     const [gridColumns, setGridColumns] = useState(2);
     const [gridGap, setGridGap] = useState(48);
     const [cleanupOpen, setCleanupOpen] = useState(false);
+    const [imageEditorNodeId, setImageEditorNodeId] = useState<string | null>(null);
+    useEffect(() => setImageEditorNodeId(null), [projectId]);
     const [paintNodeId, setPaintNodeId] = useState<string | null>(null);
     const [extractNodeId, setExtractNodeId] = useState<string | null>(null);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
@@ -455,6 +462,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (!active() || isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                 message.error(errorDetails);
                 updateNodes((prev) =>
                     prev.map((item) =>
@@ -825,6 +833,7 @@ function InfiniteCanvasPage() {
     const singleSelectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
     const toolbarNode = (toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null) || (singleSelectedNodeId ? nodeById.get(singleSelectedNodeId) || null : null);
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
+    const imageEditorNode = imageEditorNodeId ? nodeById.get(imageEditorNodeId) || null : null;
     const paintNode = paintNodeId ? nodeById.get(paintNodeId) || null : null;
     const extractNode = extractNodeId ? nodeById.get(extractNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
@@ -898,6 +907,7 @@ function InfiniteCanvasPage() {
     const { applyAgentOps } = useAgentBridge({
         projectId,
         title: currentProject?.title,
+        getCanvasCenter,
         nodes,
         connections,
         selectedNodeIds,
@@ -981,6 +991,7 @@ function InfiniteCanvasPage() {
             setToolbarNodeId((current) => (current && allIds.has(current) ? null : current));
             setDialogNodeId((current) => (current && allIds.has(current) ? null : current));
             setInfoNodeId((current) => (current && allIds.has(current) ? null : current));
+            setImageEditorNodeId((current) => (current && allIds.has(current) ? null : current));
             setPaintNodeId((current) => (current && allIds.has(current) ? null : current));
             setExtractNodeId((current) => (current && allIds.has(current) ? null : current));
             setCropNodeId((current) => (current && allIds.has(current) ? null : current));
@@ -1083,6 +1094,7 @@ function InfiniteCanvasPage() {
         setNodes([]);
         setConnections([]);
         setInfoNodeId(null);
+        setImageEditorNodeId(null);
         setPaintNodeId(null);
         setExtractNodeId(null);
         setCropNodeId(null);
@@ -1115,7 +1127,7 @@ function InfiniteCanvasPage() {
         if (next.type !== CanvasNodeType.Group) setDialogNodeId(id);
     }, []);
 
-    const copySelectedNodes = useCallback(() => {
+    const copySelectedNodes = useCallback((data?: DataTransfer | null) => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
 
@@ -1130,9 +1142,20 @@ function InfiniteCanvasPage() {
         if (!copiedNodes.length) return;
 
         clipboardRef.current = {
+            token: nanoid(),
             nodes: copiedNodes,
             connections: connectionsRef.current.filter((connection) => selectedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
         };
+        if (data) {
+            data.setData(CANVAS_IMAGE_CLIPBOARD_TYPE, clipboardRef.current.token);
+            data.setData("text/plain", copiedNodes.map((node) => node.title).join("\n"));
+        }
+    }, []);
+
+    const readCopiedImages = useCallback((data: DataTransfer): ReferenceImage[] => {
+        const clipboard = clipboardRef.current;
+        if (!clipboard || data.getData(CANVAS_IMAGE_CLIPBOARD_TYPE) !== clipboard.token) return [];
+        return clipboard.nodes.flatMap(sourceNodeReferenceImages);
     }, []);
 
     const pasteCopiedNodes = useCallback(() => {
@@ -1755,6 +1778,7 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
+            if (document.querySelector("[data-canvas-image-editor]")) return;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
 
             const key = event.key.toLowerCase();
@@ -1803,8 +1827,11 @@ function InfiniteCanvasPage() {
             }
 
             if (isModifierShortcut && !event.altKey && key === "c") {
-                event.preventDefault();
-                copySelectedNodes();
+                // Image selections use the native copy event so the editor can identify this clipboard snapshot.
+                if (!nodesRef.current.some((node) => selectedNodeIdsRef.current.has(node.id) && node.type === CanvasNodeType.Image)) {
+                    event.preventDefault();
+                    copySelectedNodes();
+                }
                 return;
             }
 
@@ -1841,8 +1868,20 @@ function InfiniteCanvasPage() {
             }
         };
 
+        const handleCopy = (event: ClipboardEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (event.defaultPrevented || !event.clipboardData || document.querySelector("[data-canvas-image-editor]") || window.getSelection()?.toString()) return;
+            if (target?.closest("input,textarea,select,[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
+            if (dragRef.current.isDraggingNode || !nodesRef.current.some((node) => selectedNodeIdsRef.current.has(node.id) && node.type === CanvasNodeType.Image)) return;
+            copySelectedNodes(event.clipboardData);
+            event.preventDefault();
+        };
         window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
+        window.addEventListener("copy", handleCopy);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("copy", handleCopy);
+        };
     }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
 
     const handleConnectStart = useCallback(
@@ -2124,6 +2163,25 @@ function InfiniteCanvasPage() {
         message.success("已提取局部图，原图保持不变");
     }, [message]);
 
+    const saveImageEditorResult = useCallback(async (node: CanvasNodeData, data: { url: string; name: string; prompt?: string; model?: string }) => {
+        const project = generationProjectRef.current;
+        const sourceNow = () => {
+            const source = nodesRef.current.find((item) => item.id === node.id);
+            if (!project.alive || generationProjectRef.current !== project || project.id !== projectId || !source || source.metadata?.storageKey !== node.metadata?.storageKey || source.metadata?.content !== node.metadata?.content) throw new Error("画布或原图已改变，请重新打开图像编辑");
+            return source;
+        };
+        sourceNow();
+        const image = await uploadImage(data.url);
+        const source = sourceNow();
+        const dimensions = fitNodeSize(image.width, image.height);
+        let position = { x: source.position.x + source.width + 96, y: source.position.y };
+        while (nodesRef.current.some((item) => item.type !== CanvasNodeType.Group && position.x < item.position.x + item.width + 24 && position.x + dimensions.width + 24 > item.position.x && position.y < item.position.y + item.height + 24 && position.y + dimensions.height + 24 > item.position.y)) position = { ...position, y: position.y + dimensions.height + 48 };
+        const child: CanvasNodeData = { id: nanoid(), type: CanvasNodeType.Image, title: data.name, position, ...dimensions, metadata: { ...imageMetadata(image), prompt: data.prompt, model: data.model, cropContext: { full: true } } };
+        setNodes((previous) => [...previous, child]);
+        setConnections((previous) => [...previous, { id: nanoid(), fromNodeId: node.id, toNodeId: child.id }]);
+        setSelectedNodeIds(new Set([child.id])); setSelectedConnectionId(null); setDialogNodeId(null);
+    }, [projectId]);
+
     const paintImageNode = useCallback(async (node: CanvasNodeData, dataUrl: string) => {
         const image = await uploadImage(dataUrl);
         const child: CanvasNodeData = {
@@ -2267,6 +2325,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.maskFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
@@ -2348,6 +2407,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
@@ -2623,6 +2683,7 @@ function InfiniteCanvasPage() {
                 } catch (error) {
                     if (active() && !isGenerationCanceled(error)) {
                         const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                         message.error(errorDetails);
                         updateNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                     }
@@ -2796,6 +2857,7 @@ function InfiniteCanvasPage() {
                             } catch (error) {
                                 if (!active() || isGenerationCanceled(error)) return false;
                                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                                 if (!firstError) firstError = errorDetails;
                                 hasFailure = true;
                                 updateNodes((prev) => prev.map((node) => (node.id === rootId ? { ...node, metadata: { ...node.metadata, images: node.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_ERROR, errorDetails } : image)) } } : node)));
@@ -2993,6 +3055,7 @@ function InfiniteCanvasPage() {
                         } catch (error) {
                             if (!active() || isGenerationCanceled(error)) return null;
                             const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                             updateNodes((prev) => prev.map((node) => (node.id === rootId ? { ...node, metadata: { ...node.metadata, texts: node.metadata?.texts?.map((item) => (item.id === textId ? { ...item, status: NODE_STATUS_ERROR, errorDetails } : item)) } } : node)));
                             return { id: textId, status: NODE_STATUS_ERROR, content: "", errorDetails } satisfies CanvasNodeText;
                         }
@@ -3028,6 +3091,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (!active() || isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                 message.error(errorDetails);
                 updateNodes((prev) =>
                     prev.map((node) =>
@@ -3189,6 +3253,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                recordDiagnostic("画布任务", error, { projectId });
                 message.error(errorDetails);
                 setNodes((prev) =>
                     prev.map((item) =>
@@ -3641,6 +3706,7 @@ function InfiniteCanvasPage() {
                     onBatchDownload={(node) => void downloadImages([node.id], nodesRef.current, node.title || "分组图片")}
                     batchDownloading={batchDownloading}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onImageEdit={(node) => setImageEditorNodeId(node.id)}
                     onPaint={(node) => setPaintNodeId(node.id)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
@@ -3761,6 +3827,8 @@ function InfiniteCanvasPage() {
                     if (viewportSaveTimerRef.current) { clearTimeout(viewportSaveTimerRef.current); viewportSaveTimerRef.current = null; }
                     return () => { historyPausedRef.current = false; };
                 }} />
+
+                {imageEditorNode?.metadata?.content ? <CanvasImageEditor key={`${projectId}:${imageEditorNode.id}:${imageEditorNode.metadata.storageKey || imageEditorNode.metadata.content}`} node={imageEditorNode} readCopiedImages={readCopiedImages} onClose={() => setImageEditorNodeId(null)} onSave={(data) => saveImageEditorResult(imageEditorNode, data)} /> : null}
 
                 {extractNode?.metadata?.content ? <CanvasExtractSelectionDialog node={extractNode} open onClose={() => setExtractNodeId(null)} onConfirm={(rect, ratio) => extractSelectionNode(extractNode, rect, ratio)} /> : null}
 

@@ -5,7 +5,7 @@ import type { CleanupOptions } from "@/lib/canvas/canvas-cleanup";
 import { prepareCleanup } from "@/services/canvas-cleanup";
 
 export function CanvasCleanupModal({ open, projectId, onClose, beforeOperation }: { open: boolean; projectId: string; onClose: () => void; beforeOperation: () => () => void }) {
-    const [options, setOptions] = useState<CleanupOptions>({ images: true, history: true, logs: true, assets: false, allProjects: false });
+    const [options, setOptions] = useState<CleanupOptions>({ images: true, history: true, logs: true, diagnostics: false, assets: false, allProjects: false });
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const patch = (value: Partial<CleanupOptions>) => setOptions((current) => ({ ...current, ...value }));
@@ -33,11 +33,12 @@ export function CanvasCleanupModal({ open, projectId, onClose, beforeOperation }
                     <Checkbox disabled={busy} checked={options.images} onChange={(event) => patch({ images: event.target.checked })}>清理输入、输出图片及缩略图（保留空节点和连线）</Checkbox>
                     <Checkbox disabled={busy} checked={options.history} onChange={(event) => patch({ history: event.target.checked })}>清理所选画布的助手对话、批次记录及错误详情</Checkbox>
                     <Checkbox disabled={busy} checked={options.logs} onChange={(event) => patch({ logs: event.target.checked })}>清理图片 / 视频工作台的全部生成历史与日志（全局）</Checkbox>
+                    <Checkbox disabled={busy} checked={Boolean(options.diagnostics)} onChange={(event) => patch({ diagnostics: event.target.checked })}>清理错误日志（全局，不删除图片、生成历史和配置）</Checkbox>
                     <Checkbox disabled={busy || !options.images} checked={options.assets} onChange={(event) => patch({ assets: event.target.checked })}>同时删除“我的素材”里的图片（全局，默认保留）</Checkbox>
                 </div>
                 <p className="text-xs opacity-65">仍被其他画布、保留素材或未清理的工作台历史引用的图片不会删除；视频和音频原文件不在此次清理范围。完成后会刷新页面，当前撤销 / 重做及内存日志一并释放。</p>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Button danger icon={<Eraser className="size-4" />} loading={busy} disabled={!options.images && !options.history && !options.logs} onClick={() => void prepare()}>直接清理并刷新</Button>
+                    <Button danger icon={<Eraser className="size-4" />} loading={busy} disabled={!options.images && !options.history && !options.logs && !options.diagnostics} onClick={() => void prepare()}>直接清理并刷新</Button>
                 </div>
             </>
             {error && <Alert type="error" showIcon title="操作未完成" description={error} />}

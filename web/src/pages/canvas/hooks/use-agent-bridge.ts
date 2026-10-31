@@ -22,6 +22,7 @@ type AgentBridgeParams = {
     connections: CanvasConnection[];
     selectedNodeIds: Set<string>;
     viewport: ViewportTransform;
+    getCanvasCenter: () => { x: number; y: number };
     nodesRef: MutableRefObject<CanvasNodeData[]>;
     connectionsRef: MutableRefObject<CanvasConnection[]>;
     selectedNodeIdsRef: MutableRefObject<Set<string>>;
@@ -40,7 +41,7 @@ type AgentBridgeParams = {
  * Bridge the canvas to its floating channel-backed assistant. All members except applyAgentOps are internal.
  */
 export function useAgentBridge(params: AgentBridgeParams) {
-    const { projectId, title, nodes, connections, selectedNodeIds, viewport, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId, setViewport, setContextMenu } =
+    const { projectId, title, nodes, connections, selectedNodeIds, viewport, getCanvasCenter, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId, setViewport, setContextMenu } =
         params;
     const setContext = useCanvasAssistantStore((state) => state.setContext);
     const agentUndoSnapshot = useRef<Array<{ before: CanvasAgentSnapshot; after: CanvasAgentSnapshot }>>([]);
@@ -144,7 +145,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
         if (!output && current === source) throw new Error("生成未启动，请检查模型、渠道及提示词");
         return output || current;
     }, [getSnapshot, applyAgentOps, projectId]);
-    useEffect(() => { const last = agentUndoSnapshot.current.at(-1); setContext({ snapshot: agentSnapshot, getSnapshot, applyOps: applyAgentOps, undoOps: undoAgentOps, canUndo: Boolean(last && last.after.nodes === nodesRef.current && last.after.connections === connectionsRef.current), runNode }); }, [agentSnapshot, getSnapshot, applyAgentOps, undoAgentOps, undoVersion, runNode, setContext]);
+    useEffect(() => { const last = agentUndoSnapshot.current.at(-1); setContext({ snapshot: agentSnapshot, getSnapshot, getCreationCenter: getCanvasCenter, applyOps: applyAgentOps, undoOps: undoAgentOps, canUndo: Boolean(last && last.after.nodes === nodesRef.current && last.after.connections === connectionsRef.current), runNode }); }, [agentSnapshot, getSnapshot, getCanvasCenter, applyAgentOps, undoAgentOps, undoVersion, runNode, setContext]);
     useEffect(() => () => setContext(null), [projectId, setContext]);
 
     return { applyAgentOps };

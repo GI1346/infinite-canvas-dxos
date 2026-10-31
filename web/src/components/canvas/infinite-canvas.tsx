@@ -45,15 +45,39 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     const paint = (next: ViewportTransform) => {
         if (paintedRef.current) paintedRef.current.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) scale(${next.k})`;
         const grid = gridRef.current?.firstElementChild as HTMLElement | null;
-        if (grid) grid.style.backgroundPosition = `${next.x % (48 * next.k)}px ${next.y % (48 * next.k)}px`;
+        if (grid) {
+            const size = gridSpacing(next.k);
+            grid.style.backgroundSize = `${size}px ${size}px`;
+            grid.style.backgroundPosition = `${next.x % size}px ${next.y % size}px`;
+        }
     };
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
+    const wheelCommitRef = useRef(false);
+    const scheduleFrame = () => {
+        if (frameRef.current !== null) return;
+        frameRef.current = requestAnimationFrame(() => {
+            frameRef.current = null;
+            const next = nextViewportRef.current;
+            nextViewportRef.current = null;
+            if (!next) return;
+            viewportRef.current = next; paint(next);
+            const previous = committedRef.current;
+            if (wheelCommitRef.current || Math.abs(next.x - previous.x) / next.k >= 256 || Math.abs(next.y - previous.y) / next.k >= 256) {
+                committedRef.current = next; callbacks.current.onViewportChange(next);
+            }
+            wheelCommitRef.current = false;
+        });
+    };
     const [isSpacePressed, setIsSpacePressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
 
     useLayoutEffect(() => {
         if (panState.current.isPanning) return;
+        // An unrelated render must not rewind a queued wheel frame; an explicit viewport jump cancels it.
+        if (nextViewportRef.current && viewport === committedRef.current) return;
+        if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+        frameRef.current = null; nextViewportRef.current = null; wheelCommitRef.current = false;
         viewportRef.current = viewport;
         committedRef.current = viewport;
         paint(viewport);
@@ -87,6 +111,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             event.stopImmediatePropagation(); // Stop native button activation and other global shortcut listeners, including repeats/keyup.
         };
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (document.querySelector("[data-canvas-image-editor]")) { spaceRef.current = false; typingSpaceRef.current = false; setIsSpacePressed(false); return; }
             if (event.code !== "Space" || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || (!spaceRef.current && !isCanvasKeyTarget(event.target))) return;
             if (!spaceRef.current && isTextEditing(event.target)) {
                 typingSpaceRef.current = true; // Keep normal typing, but recognize a following Space + left drag as a pan.
@@ -101,7 +126,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
 
         const handleKeyUp = (event: KeyboardEvent) => {
             if (event.code !== "Space") return;
-            if (spaceRef.current) captureSpace(event);
+            if (spaceRef.current && !document.querySelector("[data-canvas-image-editor]")) captureSpace(event);
             typingSpaceRef.current = false;
             spaceRef.current = false;
             setIsSpacePressed(false);
@@ -109,15 +134,16 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
 
         const handleBlur = () => {
             const wasPanning = panState.current.isPanning;
+            const hadWheelFrame = wheelCommitRef.current;
             spaceRef.current = false;
             typingSpaceRef.current = false;
             setIsSpacePressed(false);
             panState.current.isPanning = false;
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
-            frameRef.current = null;
+            frameRef.current = null; wheelCommitRef.current = false;
             const next = nextViewportRef.current || viewportRef.current;
             nextViewportRef.current = null; viewportRef.current = next; committedRef.current = next; paint(next);
-            if (wasPanning) callbacks.current.onViewportChange(next);
+            if (wasPanning || hadWheelFrame) callbacks.current.onViewportChange(next);
             setIsPanning(false);
             document.body.style.cursor = "";
         };
@@ -141,9 +167,6 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         event.preventDefault();
         event.stopPropagation();
         const current = nextViewportRef.current || viewportRef.current;
-        if (frameRef.current) cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-        nextViewportRef.current = null;
         const delta = -event.deltaY;
         const factor = wheelZoomFactor(-delta);
         const newScale = Math.min(Math.max(current.k * factor, 0.05), 5);
@@ -164,8 +187,8 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             panState.current.initialX += next.x - current.x;
             panState.current.initialY += next.y - current.y;
         }
-        viewportRef.current = next; committedRef.current = next; paint(next);
-        onViewportChange(next);
+        viewportRef.current = next; nextViewportRef.current = next; wheelCommitRef.current = true;
+        scheduleFrame();
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -238,17 +261,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 y: panState.current.initialY + dy,
                 k: viewportRef.current.k,
             };
-            if (frameRef.current) return;
-            frameRef.current = requestAnimationFrame(() => {
-                frameRef.current = null;
-                const next = nextViewportRef.current;
-                nextViewportRef.current = null;
-                if (next) {
-                    viewportRef.current = next; paint(next);
-                    const previous = committedRef.current;
-                    if (Math.abs(next.x - previous.x) / next.k >= 256 || Math.abs(next.y - previous.y) / next.k >= 256) { committedRef.current = next; callbacks.current.onViewportChange(next); }
-                }
-            });
+            scheduleFrame();
         };
 
         const handlePointerUp = () => {
@@ -258,7 +271,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 callbacks.current.onCanvasDeselect?.();
             }
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
-            frameRef.current = null;
+            frameRef.current = null; wheelCommitRef.current = false;
             const next = nextViewportRef.current || viewportRef.current;
             nextViewportRef.current = null; viewportRef.current = next; committedRef.current = next; paint(next);
             callbacks.current.onViewportChange(next);
@@ -290,7 +303,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         };
         container.addEventListener("wheel", preventWheelScroll, { passive: false, capture: true });
         return () => container.removeEventListener("wheel", preventWheelScroll, true);
-    }, [containerRef, viewport, onViewportChange]);
+    }, [containerRef]);
 
     const activeTool = isSpacePressed ? "pan" : tool;
     const cursor = isCuttingConnections ? "crosshair" : isPanning ? "grabbing" : activeTool === "pan" ? "grab" : undefined;
@@ -322,11 +335,17 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     );
 }
 
+// Coarsen only the visual grid below one readable cell; avoid dense subpixel lines shimmering in overview.
+function gridSpacing(scale: number) {
+    const size = 48 * scale;
+    return size * Math.pow(2, Math.max(0, Math.ceil(Math.log2(24 / size))));
+}
+
 function CanvasGrid({ viewport, mode }: { viewport: ViewportTransform; mode: CanvasBackgroundMode }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (mode === "blank") return null;
 
-    const gridSize = 48 * viewport.k;
+    const gridSize = gridSpacing(viewport.k);
     const x = viewport.x % gridSize;
     const y = viewport.y % gridSize;
     const dotSize = viewport.k < 0.12 ? 0.8 : 1.15;

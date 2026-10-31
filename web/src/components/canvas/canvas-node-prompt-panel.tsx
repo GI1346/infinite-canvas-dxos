@@ -17,7 +17,7 @@ import { CanvasPromptChipInput } from "./canvas-prompt-chip-input";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
-import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasResourceReferences, getGroupResourceNodes, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -50,6 +50,8 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     const [expanded, setExpanded] = useState(false);
+    const upstreamNodes = connectedNodes.flatMap((input) => input.type === CanvasNodeType.Group ? getGroupResourceNodes(input.id, nodes) : [input]);
+    const canGenerate = Boolean(prompt.trim()) || (!modeOverride && buildCanvasResourceReferences(upstreamNodes).some((reference) => Boolean(reference.text?.trim())));
 
     // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
     useEffect(() => {
@@ -65,7 +67,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if (!canGenerate || isRunning) return;
         onGenerate(node.id, mode, text);
     };
 
@@ -137,7 +139,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     type="primary"
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
                     danger={isRunning}
-                    disabled={!isRunning && !prompt.trim()}
+                    disabled={!isRunning && !canGenerate}
                     onClick={() => (isRunning ? onStop(node.id) : submit())}
                     aria-label={t(isRunning ? "canvas.promptPanel.stopGeneration" : "canvas.promptPanel.generate")}
                 >

@@ -2,7 +2,8 @@ import { App, Button, Input, Select } from "antd";
 import { useState } from "react";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { parseCallProtocols, type CallCapability, type CanvasCallProtocol } from "@/lib/canvas-call-protocol";
-import { getPluginAuthoringPrompt, getPluginTemplates } from "@/services/api/model-plugin";
+import { getPluginTemplates } from "@/services/api/model-plugin";
+import { getCallProtocolAuthoringPrompt } from "@/lib/call-protocol-authoring";
 import { useCallProtocolStore } from "@/stores/use-call-protocol-store";
 import { useConfigStore } from "@/stores/use-config-store";
 
@@ -34,7 +35,7 @@ export function ConfigProtocolCenter() {
         } catch { /* Keep the entered name while the JSON is incomplete. */ }
     };
     const template = (script: string): CanvasCallProtocol => ({ format: "canvas-call/v1", id: `my-${capability}-relay`, label: "我的中转站协议", capability, script });
-    const authoring = `${getPluginAuthoringPrompt(capability, "由用户选择的模型")}\n\n这是开源 infinite-canvas 的调用脚本协议，不是 DX 协议。根据附带的中转站官方 API 文档输出一个 JSON 对象：${JSON.stringify({ format: "canvas-call/v1", id: "my-relay", label: "中转站名称", capability, script: "完整可运行的异步函数体" })}。script 复用上述变量和 request/http/poll；自定义鉴权请使用 request（不自动附加 Bearer），URL 可用 baseUrl 拼接完整路径（不要猜测或重复添加 /v1）。认证从 apiKey 读取，模型从 model 读取。不要把实际密钥、真实站点配置或用户数据写进协议。异步任务按文档调用 poll 并显式配置 intervalMs/timeoutMs，失败状态抛出错误，signal 传递取消。不要生成文档没有的重试或接口。只返回 JSON，不用 Markdown。`;
+    const authoring = getCallProtocolAuthoringPrompt(capability);
     return <div className="grid gap-5 md:grid-cols-[240px_1fr]">
         <aside className="space-y-3">
             <h2 className="font-semibold">自定义中转站协议</h2>
@@ -48,7 +49,7 @@ export function ConfigProtocolCenter() {
         <section className="min-w-0 space-y-4">
             <div className="rounded-xl border border-border p-4">
                 <h3 className="font-semibold">1. 复制规则 → 2. 附中转站 API 文档交给 AI → 3. 粘贴 JSON 保存</h3>
-                <p className="mt-2 text-xs text-muted-foreground">支持自定义鉴权、Header、请求体、返回解析及异步轮询；不使用 DX 的 schema 或运行时。</p>
+                <p className="mt-2 text-xs text-muted-foreground">规则依据 BlinkFlow 当前运行时生成，包含真实输入参数、媒体返回格式、鉴权与异步限制；支持一次导入多条协议，不使用 DX 格式。</p>
                 <div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => copy(authoring)}>复制给 AI</Button>{getPluginTemplates()[capability].map((t) => <Button key={t.label} onClick={() => { setSelected(""); const p = template(t.script); setName(p.label); setDraft(JSON.stringify(p, null, 2)); }}>{t.label} 模板</Button>)}</div>
             </div>
             <div className="flex flex-wrap gap-2">

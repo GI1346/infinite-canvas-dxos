@@ -1,7 +1,8 @@
+import { CanvasLogsModal } from "./canvas-logs-modal";
 import { CanvasWheelSensitivity } from "./canvas-wheel-sensitivity";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Download, Eraser, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
-import { Button, Dropdown, Modal, Tooltip } from "antd";
+import { App, Button, Dropdown, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -9,6 +10,8 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
+import { openDeepSeekHarness } from "@/services/api/deepseek-harness";
+import { recordDiagnostic } from "@/services/diagnostics";
 
 export function CanvasTopBar({
     title,
@@ -60,6 +63,9 @@ export function CanvasTopBar({
     const theme = canvasThemes[colorTheme];
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
+    const [logsOpen, setLogsOpen] = useState(false);
+    const [harnessOpening, setHarnessOpening] = useState(false);
+    const { message } = App.useApp();
     const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
     const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
 
@@ -139,12 +145,23 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
+                    <Tooltip title="打开 DeepSeek Harness（官方账号登录）">
+                        <button type="button" aria-label="打开 DeepSeek Harness" disabled={harnessOpening} className="grid size-8 place-items-center rounded-full transition hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10" onClick={async () => {
+                            if (harnessOpening) return;
+                            setHarnessOpening(true);
+                            try { await openDeepSeekHarness(); }
+                            catch (error) { recordDiagnostic("DeepSeek Harness 启动", error); message.error(error instanceof Error ? error.message : "DeepSeek Harness 启动失败"); }
+                            finally { setHarnessOpening(false); }
+                        }}><img src="/icons/deepseek.svg" alt="" className="size-5" /></button>
+                    </Tooltip>
                     <Button type="text" onClick={onOpenGrid}>宫格布局</Button>
                     <Button type="text" onClick={onOpenTasks}>异步任务</Button>
+                    <Button type="text" onClick={() => setLogsOpen(true)}>日志</Button>
                     <Button type="text" icon={<Eraser className="size-4" />} onClick={onOpenCleanup}>清理</Button>
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
                 </div>
             </div>
+            <CanvasLogsModal open={logsOpen} onClose={() => setLogsOpen(false)} />
             <Modal title={t("canvas.shortcuts")} open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
                 <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
                     <Shortcut keys={["Space", t("canvas.shortcut.drag")]} value="平移画布（悬停节点也可用）" />

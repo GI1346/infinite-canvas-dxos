@@ -1,15 +1,16 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Pencil, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
 
-export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "paint" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
+export type ImageNodeActionToolId = "editor" | "copyPrompt" | "reversePrompt" | "replace" | "resize" | "paint" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
+    onImageEdit: (node: CanvasNodeData) => void;
     onPaint: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
@@ -42,6 +43,7 @@ export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
 const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
+    { id: "editor", defaultVisible: true, label: "图像编辑", title: "图像编辑", icon: () => <Pencil className="size-4" />, run: (node, handlers) => handlers.onImageEdit(node) },
     { id: "paint", defaultVisible: true, label: "画笔", title: "画笔", icon: () => <Brush className="size-4" />, run: (node, handlers) => handlers.onPaint(node) },
     {
         id: "copyPrompt",

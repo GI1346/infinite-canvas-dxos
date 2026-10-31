@@ -49,3 +49,9 @@ try {
 } finally { await reader.cancel().catch(() => {}); }
 return text;
 `;
+
+/** Agent-only JSON decisions reuse the existing SSE reader, without paid reasoning traces. */
+export const deepseekAgentChatScript = relayChatScript.replace(
+    "...(reasoningEffort && reasoningEffort !== \"auto\" ? { reasoning_effort: reasoningEffort } : {})",
+    'thinking: { type: "disabled" }, response_format: { type: "json_object" }',
+);

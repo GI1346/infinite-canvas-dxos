@@ -19,7 +19,7 @@ function Harness({ projectId }: { projectId: string }) {
         setConnections((current) => [...current, { id: "branched", fromNodeId: "upstream", toNodeId: "branch" }]);
         return "branch";
     };
-    useAgentBridge({ projectId, title: "results", nodes, connections, selectedNodeIds, viewport, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setViewport, setSelectedConnectionId: () => {}, setContextMenu: () => {} });
+    useAgentBridge({ projectId, title: "results", getCanvasCenter: () => ({ x: (750 - viewportRef.current.x) / viewportRef.current.k, y: (500 - viewportRef.current.y) / viewportRef.current.k }), nodes, connections, selectedNodeIds, viewport, nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef, generateNodeRef, pluginHostRef, setNodes, setConnections, setSelectedNodeIds, setViewport, setSelectedConnectionId: () => {}, setContextMenu: () => {} });
     return null;
 }
 async function main() {

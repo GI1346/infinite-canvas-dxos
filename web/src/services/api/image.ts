@@ -4,7 +4,7 @@ import i18n from "@/i18n";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel, type ChannelModel, guessCapability, resolveModelChannel, RELAY_TEXT_URL } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { requestRelayImage, relayTaskBase } from "./relay-tasks";
-import { relayChatScript } from "./relay-chat";
+import { deepseekAgentChatScript, relayChatScript } from "./relay-chat";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -97,7 +97,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; agent?: boolean };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -829,7 +829,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    const script = resolveModelScript(config, config.model || config.textModel);
+    const selectedScript = resolveModelScript(config, config.model || config.textModel);
+    const deepseekFlash = /(?:^|\/)deepseek[-_](?:v?4(?:[._]1)?[-_])?flash(?:[-_](?:1017|vision-exp))?$/i.test(requestConfig.model);
+    const script = options?.agent && requestConfig.apiFormat === "openai" && deepseekFlash && (!selectedScript || selectedScript === relayChatScript.trim()) ? deepseekAgentChatScript : selectedScript;
     if (script) {
         try {
             const answer = await runModelPlugin<string>({

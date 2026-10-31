@@ -7,6 +7,7 @@ import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/vide
 import { modelOptionLabel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
+import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ensurePluginsLoaded } from "@/lib/canvas/plugin-loader";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -40,6 +41,13 @@ export function usePluginHost(params: PluginHostParams) {
     const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
     const projectIdRef = useRef(params.projectId);
     projectIdRef.current = params.projectId;
+    const graphRefs = useRef({ nodes: nodesRef.current, connections: connectionsRef.current });
+    // Graph refs have been committed by the canvas page before passive effects run.
+    useEffect(() => {
+        if (graphRefs.current.nodes === nodesRef.current && graphRefs.current.connections === connectionsRef.current) return;
+        graphRefs.current = { nodes: nodesRef.current, connections: connectionsRef.current };
+        emitCanvasEvent("canvas:graph-changed");
+    });
 
     // Host capabilities available to plugin nodes; methods receive nodeId and are not bound to a specific node.
     const pluginAi = useMemo<CanvasPluginAi>(() => {

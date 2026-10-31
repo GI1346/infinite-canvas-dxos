@@ -121,8 +121,8 @@ async function toolbarChecks() {
             await act(async () => { root.render(<ConfigProvider virtual={false}><App><CanvasNodeHoverToolbar node={node} viewport={viewport} onKeep={no} onLeave={no} onInfo={no} onDecreaseFont={no} onIncreaseFont={no} onToggleDialog={no} onGenerateImage={no} onUpload={no} onDownload={no} onSaveAsset={no} onPaint={no} onMaskEdit={no} onCrop={no} onExtractSelection={no} onAddToAgent={no} onSplit={no} onUpscale={no} onSuperResolve={no} onAngle={no} onViewImage={no} onReversePrompt={no} onRetry={no} onToggleFreeResize={no} onDelete={no} /></App></ConfigProvider>); });
             const toolbar = host.querySelector('[data-node-toolbar="toolbar-name-gap"]') as HTMLElement; assert.ok(toolbar);
             assert.ok(toolbar.classList.contains("-translate-y-full"));
-            const toolbarBottom = parseFloat(toolbar.style.top), titleTop = viewport.y + (node.position.y - 28) * k;
-            assert.equal(titleTop - toolbarBottom, 8, `scale=${k}: toolbar must not overlap the scaled node title`);
+            const toolbarBottom = parseFloat(toolbar.style.top), titleTop = viewport.y + (node.position.y - 44) * k;
+            assert.equal(titleTop - toolbarBottom, 8, `scale=${k}: toolbar must not overlap the normally scaled image title`);
             assert.equal(parseFloat(toolbar.style.left), viewport.x + (node.position.x + node.width / 2) * k);
         }
         await act(async () => root.unmount()); host.remove();

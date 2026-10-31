@@ -26,6 +26,7 @@ type CanvasNodeHoverToolbarProps = {
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
+    onImageEdit: (node: CanvasNodeData) => void;
     onPaint: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
@@ -70,6 +71,7 @@ export function CanvasNodeHoverToolbar({
     onUpload,
     onDownload,
     onSaveAsset,
+    onImageEdit,
     onPaint,
     onMaskEdit,
     onCrop,
@@ -120,7 +122,7 @@ export function CanvasNodeHoverToolbar({
 
     const activeNode = node;
     const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 28 * viewport.k - 8;
+    const top = viewport.y + node.position.y * viewport.k - (node.type === CanvasNodeType.Image ? 44 : 28) * viewport.k - 8;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -140,7 +142,7 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, t("common.promptCopied"));
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onPaint, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onImageEdit, onPaint, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
 
     function openImageToolSettings() {
         onKeep(activeNode.id);
@@ -171,7 +173,7 @@ export function CanvasNodeHoverToolbar({
         ...(isAudio ? [{ id: "uploadAudio", title: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), label: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
-    const pinnedIds = ["paint", "crop", "split", "extract", "addToAgent"];
+    const pinnedIds = ["editor", "paint", "crop", "split", "extract", "addToAgent"];
     const pinnedTools = imageTools.filter((tool) => pinnedIds.includes(tool.id)).sort((a, b) => pinnedIds.indexOf(a.id) - pinnedIds.indexOf(b.id));
     const toolbarTools = hasImage ? [...pinnedTools, { id: "extract", title: "提取选区", label: "提取选区", icon: <Scan className="size-4" />, onClick: () => onExtractSelection(node) }, baseToolbarTools[0], ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => !pinnedIds.includes(tool.id) && quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry" && !pinnedIds.includes(tool.id)) as ImageToolbarSettingsTool[];

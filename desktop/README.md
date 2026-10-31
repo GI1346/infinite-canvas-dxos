@@ -4,13 +4,35 @@ BlinkFlow 保留开源画布的多维表格、并发生成和自定义中转协�
 
 ## 下载与升级
 
-从 [本仓库 Releases](https://github.com/GI1346/infinite-canvas-dxos/releases) 下载实际已发布的 `BlinkFlow-Setup-<版本>-x64.exe`。当前源码和已构建验收的安装包版本为 **0.20.9**：悬浮 Agent 与动态模型、11 类 Skill、图片提取选区与融合、多选拖拽连线，以及中性深色主题。包体构建与验收已完成，是否已发布仍以 Releases 实际附件为准；本段不声明附件已上传。历史版本记录保留在本文后部。
+从 [本仓库 Releases](https://github.com/GI1346/infinite-canvas-dxos/releases) 下载实际已发布的 `BlinkFlow-Setup-<版本>-x64.exe`。当前发布版本为 **0.20.31**，包含 LLM 连接输入预览、紧凑并发宫格、右侧 Agent、官方 DeepSeek Harness 和独立图像编辑工作区。附件发布状态以 Releases 为准；构建与包体核对不等于所有真实渠道和交互均已验收。历史版本记录保留在本文后部。
 
 应用 ID、稳定本机地址 `http://127.0.0.1:17456` 和数据键保持不变。新版桌面存储代码将数据统一置于**安装时选择的程序目录**下的 `BlinkFlowData`，不是下载的安装包所在目录。首次启动复制并逐文件校验旧 `%APPDATA%/Infinite Canvas DXOS` 桌面数据；完成标记写入后不再重复迁移。原目录不删除，也不提供清理旧目录按钮。请先退出旧版再启动新版。纯浏览器版的数据不会自动转入桌面版。
 
 「配置 → 本地存储」显示程序目录和数据完整路径，可打开目录。`Profile` 保存画布、图片、素材、API 配置、协议、历史和浏览器缓存，`Temp` / `Logs` / `CrashDumps` / `Downloads` 保存临时文件、日志、崩溃文件和应用下载。安装目录必须可写；失败会明确报错，不会悄悄回退 AppData。外部原文件、其他进程（如单独启动的 Agent / 代理）的数据和 Windows 自身文件不在应用管理范围内。
 
 「清除其他数据，保留 API 配置」经确认后卸载页面并重启，在 Chromium 打开数据库前清除应用数据目录，保留渠道 URL、各自独立 Key、模型与协议绑定、自定义协议及 Agent 连接凭据，再恢复后启动。无备份；画布、素材、图片、历史、日志、缓存、临时文件、应用下载、其他偏好和 WebDAV 配置会清除。失败保留 API 恢复记录，下次启动继续恢复；该记录不包含在源码或安装包。安装器不会删除 `BlinkFlowData`。发布核对成功后本地只保留 **1 份最新版安装包**；源码继续保留。
+
+## 从源码制作桌面包
+
+在 Windows x64 安装项目所需 Node.js，解压源码至 D 盘后，在仓库目录执行以下步骤。依赖和构建缓存均使用 D 盘；源码 ZIP 不包含可重建的 Node / Harness 依赖目录或任何登录凭据。
+
+```powershell
+$env:TEMP = "D:\Codex\build-cache\temp"
+$env:TMP = $env:TEMP
+$env:npm_config_cache = "D:\Codex\build-cache\npm"
+$env:ELECTRON_CACHE = "D:\Codex\build-cache\electron"
+$env:ELECTRON_BUILDER_CACHE = "D:\Codex\build-cache\electron-builder"
+New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+npm --prefix web ci
+npm --prefix desktop ci
+node desktop/scripts/prepare-harness.cjs
+npm --prefix web run build
+New-Item -ItemType Directory -Force -Path desktop/web | Out-Null
+Copy-Item -Path web/dist/* -Destination desktop/web -Recurse -Force
+npm --prefix desktop run build -- --publish never
+```
+
+Harness 准备脚本使用锁定的官方 npm 包及经过 SHA256 校验的官方 Node 24.14.0；打包产物位于 `desktop/release/`，不会包含本机 `BlinkFlowData`。该步骤需要联网下载依赖，实际账号授权在安装后单独完成。
 
 ## 中转站与独立密钥
 

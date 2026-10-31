@@ -4,6 +4,8 @@ const mediaExtensions: Record<string, string> = {
 };
 const extensionPattern = /\.(png|jpe?g|webp|gif|avif|svg|bmp|tiff?|mp4|webm|mov|mp3|m4a|aac|wav|ogg|opus|flac|pcm)$/i;
 
+export function canvasTitleWithoutExtension(title: string) { return title.replace(extensionPattern, ""); }
+
 export async function canvasDownloadMimeType(content: string, mimeType?: string) {
     if (mimeType || !content.startsWith("blob:")) return mimeType;
     try { return (await (await fetch(content)).blob()).type || mimeType; }

@@ -1,3 +1,4 @@
+import { diagnosticStoreName, flushDiagnosticLogs } from "@/services/diagnostics";
 import localforage from "localforage";
 import { zip, unzip, strToU8, strFromU8 } from "fflate";
 import { cleanAssets, cleanProject, type CleanupOptions } from "@/lib/canvas/canvas-cleanup";
@@ -6,7 +7,7 @@ import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const imageStores = ["image_files", "image_previews"];
 const logStores = ["image_generation_logs", "video_generation_logs", "relay_tasks"];
-const allowedStores = [...imageStores, ...logStores, "canvas_assistant"];
+const allowedStores = [...imageStores, ...logStores, diagnosticStoreName, "canvas_assistant"];
 const canvasKey = "infinite-canvas:canvas_store", assetKey = "infinite-canvas:asset_store";
 type RecordEntry = { store: string; key: string; value: unknown };
 type Backup = { format: "canvas-cleanup/v1"; createdAt: string; projects: CanvasProject[]; assets: Asset[]; records: RecordEntry[] };
@@ -30,7 +31,7 @@ async function recordsIn(names: string[]) {
 }
 
 export async function prepareCleanup(projectId: string, options: CleanupOptions, createBackup = true): Promise<CleanupPlan> {
-    if (!options.images && !options.history && !options.logs) throw new Error("请至少选择一项清理内容");
+    if (!options.images && !options.history && !options.logs && !options.diagnostics) throw new Error("请至少选择一项清理内容");
     if (!useCanvasStore.getState().hydrated || !useAssetStore.getState().hydrated) throw new Error("本地数据尚未加载完成");
     await flushCanvasStorage();
     const { projects, deletedProjects } = useCanvasStore.getState();
@@ -38,7 +39,7 @@ export async function prepareCleanup(projectId: string, options: CleanupOptions,
     const affected = projects.filter((p) => options.allProjects || p.id === projectId);
     if (!affected.length) throw new Error("没有找到当前画布");
     const selected = new Set(affected.map((p) => p.id));
-    const nextProjects = projects.map((p) => selected.has(p.id) ? cleanProject(p, options) : p);
+    const nextProjects = !options.images && !options.history ? projects : projects.map((p) => selected.has(p.id) ? cleanProject(p, options) : p);
     const nextAssets = cleanAssets(assets, options);
     const assistantRecords = options.history ? (await recordsIn(["canvas_assistant"])).filter((record) => options.allProjects || selected.has(record.key)) : [];
     const logs = await recordsIn(logStores);
@@ -46,15 +47,16 @@ export async function prepareCleanup(projectId: string, options: CleanupOptions,
     const retained = imageKeys({ projects: nextProjects, assets: nextAssets, logs: options.logs ? [] : logs });
     const records = options.images ? (await recordsIn(imageStores)).filter((r) => !retained.has(r.key)) : [];
     if (options.logs) records.push(...logs);
+    if (options.diagnostics) { await flushDiagnosticLogs(); records.push(...await recordsIn([diagnosticStoreName])); }
     records.push(...assistantRecords);
     const backup = createBackup ? await encodeBackup({ format: "canvas-cleanup/v1", createdAt: new Date().toISOString(), projects: affected, assets: options.images && options.assets ? assets.filter((a) => a.kind === "image") : [], records }) : new Blob();
     return {
         backup,
         imageCount: records.filter((r) => r.store === "image_files").length,
-        recordCount: options.logs ? logs.length : 0,
+        recordCount: (options.logs ? logs.length : 0) + records.filter((record) => record.store === diagnosticStoreName).length,
         apply: async () => {
             if (useCanvasStore.getState().projects !== projects || useAssetStore.getState().assets !== assets) throw new Error("清理准备后画布或素材发生了变化，请重新执行清理");
-            const writes: RecordEntry[] = [{ store: "app_state", key: canvasKey, value: JSON.stringify({ state: { projects: nextProjects, deletedProjects }, version: 0 }) }];
+            const writes: RecordEntry[] = nextProjects === projects ? [] : [{ store: "app_state", key: canvasKey, value: JSON.stringify({ state: { projects: nextProjects, deletedProjects }, version: 0 }) }];
             if (options.images && options.assets) writes.push({ store: "app_state", key: assetKey, value: JSON.stringify({ state: { assets: nextAssets }, version: 0 }) });
             await commitRecords(writes, records);
         },
@@ -63,6 +65,7 @@ export async function prepareCleanup(projectId: string, options: CleanupOptions,
 
 // One IndexedDB transaction: failure leaves all selected data untouched.
 function commitRecords(writes: RecordEntry[], removals: RecordEntry[] = []) {
+    if (!writes.length && !removals.length) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
         const request = indexedDB.open("infinite-canvas");
         request.onerror = () => reject(request.error);
